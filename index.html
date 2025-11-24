@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>WebGL PBR Model Perf Tool</title>
+    <link rel="stylesheet" href="src/style.css">
+    
+    <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
+</head>
+<body>
+    <canvas id="webgl-canvas"></canvas>
+
+    <div id="stats-panel">
+        <div class="panel-header">Performance Metrics</div>
+        <div class="metric-row"><span class="label">FPS:</span><span class="value good" id="val-fps">--</span></div>
+        <div class="metric-row"><span class="label">Frame Time:</span><span class="value" id="val-frametime">-- ms</span></div>
+        <div class="separator"></div>
+        <div class="metric-row"><span class="label">Load Time:</span><span class="value" id="val-loadtime">0 ms</span></div>
+        <div class="metric-row"><span class="label">VRAM (Est.):</span><span class="value" id="val-vram">0 MB</span></div>
+        <div class="separator"></div>
+        <div class="metric-row"><span class="label">Draw Calls:</span><span class="value" id="val-drawcalls">0</span></div>
+        <div class="metric-row"><span class="label">Triangles:</span><span class="value" id="val-tris">0</span></div>
+        
+        <div id="console-output">
+            > System Initializing...
+        </div>
+    </div>
+
+    <div id="gui-container">
+        <div class="panel-header">Configuration</div>
+        
+        <div class="custom-control">
+            <div class="control-label">Debug</div>
+            <button class="btn-primary" style="background:#fba92e; color:#000;" id="btn-debug">Generate Test Cube</button>
+        </div>
+
+        <div class="custom-control">
+            <div class="control-label">1. Load Model</div>
+            <div class="sub-label">方式 A: 文件夹 (推荐)</div>
+            <input type="file" id="file-input-folder" webkitdirectory directory multiple style="display:none;">
+            <button class="btn-secondary" onclick="document.getElementById('file-input-folder').click()">Select Folder</button>
+            
+            <div class="sub-label" style="margin-top:8px;">方式 B: 多文件</div>
+            <input type="file" id="file-input-files" multiple style="display:none;">
+            <button class="btn-primary" onclick="document.getElementById('file-input-files').click()">Select Files</button>
+        </div>
+        
+        <div class="custom-control">
+            <div class="control-label">2. Environment</div>
+            <input type="file" id="file-input-hdr" accept=".hdr" style="display:none;">
+            <button class="btn-secondary" onclick="document.getElementById('file-input-hdr').click()">Select HDR</button>
+        </div>
+
+        <div class="custom-control">
+            <div class="control-label">3. Simplification (QEM)</div>
+            <div class="sub-label" style="display:flex; justify-content:space-between;">
+                <span>Reduce Ratio</span>
+                <span id="simp-val" style="color:#00ff9d; font-weight:bold;">0%</span>
+            </div>
+            <input type="range" id="simp-slider" min="0" max="98" value="0" step="1" class="geek-slider">
+        </div>
+
+        <div class="custom-control" style="border-bottom:none; padding-bottom:0;">
+            <div class="control-label">4. Render Settings</div>
+        </div>
+        <div id="lil-gui-mount"></div>
+    </div>
+
+    <div id="charts-panel"></div>
+
+    <script type="module" src="src/main.js"></script>
+</body>
+</html>
