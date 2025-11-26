@@ -5,14 +5,17 @@ import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { SimplifyModifier } from 'three/addons/modifiers/SimplifyModifier.js';
 import GUI from 'three/addons/libs/lil-gui.module.min.js';
 
-// === 1. 图表类定义 ===
+// === 1. 图表类定义 (使用 uPlot) ===
 class PerfChart {
     constructor(name, color, suffix = '') {
         this.name = name;
-        this.color = color; 
+        this.color = color;
         this.suffix = suffix;
-        this.data = new Array(60).fill(0);
         
+        this.xData = []; 
+        this.yData = [];
+        this.maxPoints = 60; 
+
         let panel = document.getElementById('charts-panel');
         if (!panel) {
             panel = document.createElement('div');
@@ -22,53 +25,79 @@ class PerfChart {
 
         this.dom = document.createElement('div');
         this.dom.className = 'chart-container';
+        
         this.dom.innerHTML = `
-            <div class="chart-title" style="color:${color}">${name}</div>
-            <div class="chart-value">${0}</div>
-            <canvas class="chart-canvas" width="360" height="150"></canvas> 
+            <div class="chart-header">
+                <span class="chart-title" style="color:${color}">${name}</span>
+                <span class="chart-value">--</span>
+            </div>
+            <div class="uplot-mount"></div>
         `;
         panel.appendChild(this.dom);
-        
+
         this.valueDom = this.dom.querySelector('.chart-value');
-        this.canvas = this.dom.querySelector('canvas');
-        this.ctx = this.canvas.getContext('2d');
+        const mount = this.dom.querySelector('.uplot-mount');
+
+        // uPlot 配置 (尺寸更新以适配更大的容器)
+        const opts = {
+            width: 398,  // 适配 400px 的容器
+            height: 206, // 适配剩余高度
+            class: "uplot-chart",
+            cursor: {
+                show: true,
+                points: { size: 6, fill: color }
+            },
+            legend: { show: false },
+            select: { show: false },
+            scales: { x: { time: false } },
+            axes: [
+                {
+                    show: true,
+                    stroke: "#555",
+                    grid: { show: true, stroke: "#222", width: 1 },
+                    ticks: { show: false }
+                },
+                {
+                    show: true,
+                    stroke: "#888",
+                    grid: { show: true, stroke: "#222", width: 1 },
+                    size: 50, // 标签宽度加大
+                    values: (self, ticks) => ticks.map(v => this.formatAxis(v))
+                }
+            ],
+            series: [
+                {}, 
+                {
+                    stroke: color,
+                    width: 2,
+                    fill: this.hexToRgba(color, 0.1),
+                    points: { show: false }
+                }
+            ]
+        };
+
+        this.uplot = new window.uPlot(opts, [[], []], mount);
     }
 
     update(val) {
-        this.data.shift();
-        this.data.push(val);
         this.valueDom.innerText = val.toLocaleString() + this.suffix;
-        
-        let min = Math.min(...this.data);
-        let max = Math.max(...this.data);
-        if (max === min) max = min + 1;
-        const range = max - min;
-        
-        const ctx = this.ctx;
-        const w = this.canvas.width;
-        const h = this.canvas.height;
-        const padding = 8;
-        
-        ctx.clearRect(0, 0, w, h);
-        
-        ctx.beginPath();
-        ctx.strokeStyle = this.color;
-        ctx.lineWidth = 2;
-        
-        for (let i = 0; i < this.data.length; i++) {
-            const x = (i / (this.data.length - 1)) * w;
-            const normalized = (this.data[i] - min) / range;
-            const y = h - (normalized * (h - padding * 2) + padding);
-            
-            if (i === 0) ctx.moveTo(x, y); 
-            else ctx.lineTo(x, y);
+
+        const index = this.xData.length > 0 ? this.xData[this.xData.length - 1] + 1 : 0;
+        this.xData.push(index);
+        this.yData.push(val);
+
+        if (this.xData.length > this.maxPoints) {
+            this.xData.shift();
+            this.yData.shift();
         }
-        ctx.stroke();
-        
-        ctx.lineTo(w, h);
-        ctx.lineTo(0, h);
-        ctx.fillStyle = this.hexToRgba(this.color, 0.1); 
-        ctx.fill();
+        this.uplot.setData([this.xData, this.yData]);
+    }
+
+    formatAxis(v) {
+        if (v >= 1000000) return (v / 1000000).toFixed(1) + 'M';
+        if (v >= 1000) return (v / 1000).toFixed(0) + 'k';
+        if (v % 1 !== 0 && v < 10) return v.toFixed(1); // 小数显示一位
+        return v.toFixed(0);
     }
 
     hexToRgba(hex, alpha) {
@@ -85,11 +114,15 @@ let modelGroup, originalMeshes = [];
 let charts = {}; 
 let lastTime = performance.now();
 let frameCount = 0;
-let isLoopRunning = false; // 防止重复启动循环
+let isLoopRunning = false;
+
+// 新增计时累加器
+let accCpuTime = 0;
+let accGpuTime = 0;
 
 const params = {
-    unlockFPS: false, // 默认锁帧 (VSync)
-    frustumCulling: false, // 默认关闭剔除
+    unlockFPS: false,
+    frustumCulling: false,
     exposure: 1.0,
     blur: 0.0,
     rotation: 0,
@@ -107,12 +140,11 @@ function init() {
     camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 10000);
     camera.position.set(4, 3, 4);
 
-    // alpha: false 可以稍微提升性能
     renderer = new THREE.WebGLRenderer({ 
         canvas: document.getElementById('webgl-canvas'), 
         antialias: true, 
         alpha: false,
-        powerPreference: "high-performance" // 申请高性能 GPU
+        powerPreference: "high-performance"
     });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -136,10 +168,13 @@ function init() {
     initGUI();
     initFileHandlers();
     
+    // 初始化图表 (新增 CPU 和 GPU)
     try {
         charts = {
             fps: new PerfChart('FPS', '#00ff9d'),          
-            ms: new PerfChart('Frame Time', '#00ccff', ' ms'), 
+            // ms: new PerfChart('Frame Time', '#00ccff', ' ms'), // 可以选择隐藏总帧时间，或者保留
+            cpu: new PerfChart('CPU (Logic)', '#ff00ff', ' ms'), // 新增
+            gpu: new PerfChart('GPU (Render)', '#00ccff', ' ms'), // 新增
             calls: new PerfChart('Draw Calls', '#ffcc00'),     
             tris: new PerfChart('Triangles', '#ff5555')        
         };
@@ -155,7 +190,6 @@ function init() {
 }
 
 function initGUI() {
-    // 1. Simplification Slider
     const slider = document.getElementById('simp-slider');
     const sliderVal = document.getElementById('simp-val');
     
@@ -170,16 +204,13 @@ function initGUI() {
         });
     }
 
-    // 2. Render Settings
     const gui = new GUI({ container: document.getElementById('lil-gui-mount'), width: '100%' });
     
-    // 开关：解锁 FPS
     gui.add(params, 'unlockFPS').name('Unlock FPS Limit')
        .onChange(v => {
            log(v ? "FPS Unlocked (High CPU Usage)" : "FPS Locked (VSync)");
        });
 
-    // 开关：视锥体剔除
     gui.add(params, 'frustumCulling').name('Frustum Culling')
        .onChange(updateCullingSettings);
        
@@ -271,7 +302,7 @@ function onModelLoaded(object, startTime) {
         if (child.isMesh) {
             child.castShadow = true;
             child.receiveShadow = true;
-            child.frustumCulled = params.frustumCulling; // Apply current setting
+            child.frustumCulled = params.frustumCulling;
 
             if(child.geometry) {
                 const attr = child.geometry.attributes;
@@ -291,8 +322,6 @@ function onModelLoaded(object, startTime) {
     document.getElementById('val-vram').innerText = `~${(vramSize / 1024 / 1024).toFixed(1)} MB (Geo)`;
     
     log(`Model Loaded in ${loadTime}ms`);
-    if (!params.frustumCulling) log("Note: Frustum Culling is OFF");
-
     centerModel(modelGroup);
 }
 
@@ -324,8 +353,6 @@ function centerModel(object) {
     controls.maxDistance = maxDim * 10;
     controls.target.set(0, 0, 0);
     controls.update();
-
-    log(`Centered. Size: ${size.x.toFixed(2)}`);
 }
 
 const modifier = new SimplifyModifier();
@@ -391,56 +418,79 @@ function onWindowResize() {
     renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
-// === 关键：可切换的渲染循环 ===
+// === 核心：带计时的渲染循环 ===
 function animate() {
-    // 1. 调度下一帧
     if (params.unlockFPS) {
-        // 使用 setTimeout 尽可能快地循环 (不等待 VSync)
         setTimeout(animate, 0);
     } else {
-        // 使用标准 rAF (等待 VSync)
         requestAnimationFrame(animate);
     }
 
-    // 2. 核心渲染逻辑
-    const now = performance.now();
-    frameCount++;
+    const t0 = performance.now(); // 帧开始
+
+    // 1. CPU Logic Phase (Controls, Physics, Updates)
+    controls.update();
+    if(modelGroup && params.rotation > 0) {
+        // 自动旋转逻辑也算在 CPU 里
+    }
+    const t1 = performance.now(); // Logic 结束
     
-    // 更新统计数据 (每 500ms 更新一次 UI，避免闪烁)
+    // 2. GPU/Render Phase (Command Submission)
+    renderer.render(scene, camera);
+    const t2 = performance.now(); // Render 结束
+
+    // 计算耗时
+    const cpuDuration = t1 - t0;
+    const gpuDuration = t2 - t1; // 注意：这是 renderer.render 的 CPU 耗时，但在 WebGL 性能分析中常作为 "Draw Overhead"
+
+    frameCount++;
+    accCpuTime += cpuDuration;
+    accGpuTime += gpuDuration;
+
+    const now = performance.now();
+    
+    // 更新统计数据 (每 500ms)
     if (now - lastTime >= 500) {
         const timeDiff = now - lastTime;
         const fps = Math.round((frameCount * 1000) / timeDiff);
+        const avgFrameTime = (timeDiff / frameCount).toFixed(2);
         
-        // 注意：在 unlock 模式下，这个 frameTime 可能非常小
-        const frameTime = (timeDiff / frameCount).toFixed(2);
-        
+        // 计算平均 CPU/GPU 耗时
+        const avgCpu = (accCpuTime / frameCount).toFixed(2);
+        const avgGpu = (accGpuTime / frameCount).toFixed(2);
+
         const calls = renderer.info.render.calls;
         const tris = renderer.info.render.triangles;
         
         const fpsEl = document.getElementById('val-fps');
         if(fpsEl) {
             document.getElementById('val-fps').innerText = fps;
-            document.getElementById('val-frametime').innerText = frameTime + " ms";
+            document.getElementById('val-frametime').innerText = avgFrameTime + " ms";
+            // 新增数据的 DOM 更新
+            document.getElementById('val-cpu').innerText = avgCpu + " ms";
+            document.getElementById('val-gpu').innerText = avgGpu + " ms";
+
             document.getElementById('val-drawcalls').innerText = calls;
             document.getElementById('val-tris').innerText = tris;
         }
 
         if (charts.fps) {
             charts.fps.update(fps);
-            charts.ms.update(parseFloat(frameTime));
+            // charts.ms.update(parseFloat(avgFrameTime)); // 可选
+            charts.cpu.update(parseFloat(avgCpu));
+            charts.gpu.update(parseFloat(avgGpu));
             charts.calls.update(calls);
             charts.tris.update(tris);
         }
         
+        // 重置计数器
         frameCount = 0;
+        accCpuTime = 0;
+        accGpuTime = 0;
         lastTime = now;
     }
-
-    controls.update();
-    renderer.render(scene, camera);
 }
 
-// === 4. 启动程序 ===
 if (!isLoopRunning) {
     isLoopRunning = true;
     init();
