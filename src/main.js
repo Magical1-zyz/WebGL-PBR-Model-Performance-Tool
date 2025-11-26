@@ -85,10 +85,11 @@ let modelGroup, originalMeshes = [];
 let charts = {}; 
 let lastTime = performance.now();
 let frameCount = 0;
+let isLoopRunning = false; // 防止重复启动循环
 
 const params = {
-    // 默认不开启视锥体剔除 (Frustum Culling)，以便检测整体性能
-    frustumCulling: false, 
+    unlockFPS: false, // 默认锁帧 (VSync)
+    frustumCulling: false, // 默认关闭剔除
     exposure: 1.0,
     blur: 0.0,
     rotation: 0,
@@ -106,7 +107,13 @@ function init() {
     camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 10000);
     camera.position.set(4, 3, 4);
 
-    renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('webgl-canvas'), antialias: true, alpha: false });
+    // alpha: false 可以稍微提升性能
+    renderer = new THREE.WebGLRenderer({ 
+        canvas: document.getElementById('webgl-canvas'), 
+        antialias: true, 
+        alpha: false,
+        powerPreference: "high-performance" // 申请高性能 GPU
+    });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -166,9 +173,14 @@ function initGUI() {
     // 2. Render Settings
     const gui = new GUI({ container: document.getElementById('lil-gui-mount'), width: '100%' });
     
-    // 新增：Frustum Culling 开关
-    gui.add(params, 'frustumCulling')
-       .name('Frustum Culling') // 对应中文：视锥体剔除 (遮挡剔除)
+    // 开关：解锁 FPS
+    gui.add(params, 'unlockFPS').name('Unlock FPS Limit')
+       .onChange(v => {
+           log(v ? "FPS Unlocked (High CPU Usage)" : "FPS Locked (VSync)");
+       });
+
+    // 开关：视锥体剔除
+    gui.add(params, 'frustumCulling').name('Frustum Culling')
        .onChange(updateCullingSettings);
        
     gui.add(params, 'exposure', 0.1, 5.0).name('Exposure').onChange(v => renderer.toneMappingExposure = v);
@@ -179,7 +191,6 @@ function initGUI() {
     gui.add(params, 'resetCam').name('Reset Camera');
 }
 
-// 辅助函数：更新所有子网格的剔除设置
 function updateCullingSettings(enabled) {
     if (!modelGroup) return;
     let count = 0;
@@ -260,9 +271,7 @@ function onModelLoaded(object, startTime) {
         if (child.isMesh) {
             child.castShadow = true;
             child.receiveShadow = true;
-            
-            // 关键：应用默认的剔除设置 (False)
-            child.frustumCulled = params.frustumCulling;
+            child.frustumCulled = params.frustumCulling; // Apply current setting
 
             if(child.geometry) {
                 const attr = child.geometry.attributes;
@@ -282,10 +291,7 @@ function onModelLoaded(object, startTime) {
     document.getElementById('val-vram').innerText = `~${(vramSize / 1024 / 1024).toFixed(1)} MB (Geo)`;
     
     log(`Model Loaded in ${loadTime}ms`);
-    // 打印当前剔除状态提示
-    if (!params.frustumCulling) {
-        log("Note: Frustum Culling is OFF (Testing Full Load)");
-    }
+    if (!params.frustumCulling) log("Note: Frustum Culling is OFF");
 
     centerModel(modelGroup);
 }
@@ -385,16 +391,29 @@ function onWindowResize() {
     renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
+// === 关键：可切换的渲染循环 ===
 function animate() {
-    requestAnimationFrame(animate);
-    
+    // 1. 调度下一帧
+    if (params.unlockFPS) {
+        // 使用 setTimeout 尽可能快地循环 (不等待 VSync)
+        setTimeout(animate, 0);
+    } else {
+        // 使用标准 rAF (等待 VSync)
+        requestAnimationFrame(animate);
+    }
+
+    // 2. 核心渲染逻辑
     const now = performance.now();
     frameCount++;
     
+    // 更新统计数据 (每 500ms 更新一次 UI，避免闪烁)
     if (now - lastTime >= 500) {
         const timeDiff = now - lastTime;
         const fps = Math.round((frameCount * 1000) / timeDiff);
-        const frameTime = (timeDiff / frameCount).toFixed(1);
+        
+        // 注意：在 unlock 模式下，这个 frameTime 可能非常小
+        const frameTime = (timeDiff / frameCount).toFixed(2);
+        
         const calls = renderer.info.render.calls;
         const tris = renderer.info.render.triangles;
         
@@ -422,5 +441,8 @@ function animate() {
 }
 
 // === 4. 启动程序 ===
-init();
-animate();
+if (!isLoopRunning) {
+    isLoopRunning = true;
+    init();
+    animate();
+}
