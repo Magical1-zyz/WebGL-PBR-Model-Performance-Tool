@@ -87,6 +87,8 @@ let lastTime = performance.now();
 let frameCount = 0;
 
 const params = {
+    // 默认不开启视锥体剔除 (Frustum Culling)，以便检测整体性能
+    frustumCulling: false, 
     exposure: 1.0,
     blur: 0.0,
     rotation: 0,
@@ -146,39 +148,48 @@ function init() {
 }
 
 function initGUI() {
-    // 1. 绑定原生 HTML 滑动条 (3. Simplification)
+    // 1. Simplification Slider
     const slider = document.getElementById('simp-slider');
     const sliderVal = document.getElementById('simp-val');
     
     if (slider) {
-        // 初始化状态：强制归零
         slider.value = 0;
         sliderVal.innerText = "0% (Original)";
-        
         slider.addEventListener('input', (e) => {
             const val = parseInt(e.target.value);
-            
-            // 更新文字显示
-            if (val === 0) {
-                sliderVal.innerText = "0% (Original)";
-            } else {
-                sliderVal.innerText = val + "% (Reduced)";
-            }
-
-            // 传入比率：0 (不减) -> 0.98 (减掉98%)
+            if (val === 0) sliderVal.innerText = "0% (Original)";
+            else sliderVal.innerText = val + "% (Reduced)";
             applySimplification(val / 100);
         });
     }
 
-    // 2. 配置 Lil-GUI (4. Render Settings)
+    // 2. Render Settings
     const gui = new GUI({ container: document.getElementById('lil-gui-mount'), width: '100%' });
     
+    // 新增：Frustum Culling 开关
+    gui.add(params, 'frustumCulling')
+       .name('Frustum Culling') // 对应中文：视锥体剔除 (遮挡剔除)
+       .onChange(updateCullingSettings);
+       
     gui.add(params, 'exposure', 0.1, 5.0).name('Exposure').onChange(v => renderer.toneMappingExposure = v);
     gui.add(params, 'blur', 0, 1).name('BG Blur').onChange(v => scene.backgroundBlurriness = v);
     gui.add(params, 'rotation', 0, 360).name('Auto Rotation').onChange(v => {
         if(modelGroup) modelGroup.rotation.y = THREE.MathUtils.degToRad(v);
     });
     gui.add(params, 'resetCam').name('Reset Camera');
+}
+
+// 辅助函数：更新所有子网格的剔除设置
+function updateCullingSettings(enabled) {
+    if (!modelGroup) return;
+    let count = 0;
+    modelGroup.traverse((child) => {
+        if (child.isMesh) {
+            child.frustumCulled = enabled;
+            count++;
+        }
+    });
+    log(`Frustum Culling set to: ${enabled} (${count} meshes)`);
 }
 
 function initFileHandlers() {
@@ -249,6 +260,10 @@ function onModelLoaded(object, startTime) {
         if (child.isMesh) {
             child.castShadow = true;
             child.receiveShadow = true;
+            
+            // 关键：应用默认的剔除设置 (False)
+            child.frustumCulled = params.frustumCulling;
+
             if(child.geometry) {
                 const attr = child.geometry.attributes;
                 for(let name in attr) {
@@ -263,12 +278,15 @@ function onModelLoaded(object, startTime) {
     });
 
     const loadTime = (performance.now() - startTime).toFixed(0);
-    const loadTimeEl = document.getElementById('val-loadtime');
-    const vramEl = document.getElementById('val-vram');
-    if(loadTimeEl) loadTimeEl.innerText = `${loadTime} ms`;
-    if(vramEl) vramEl.innerText = `~${(vramSize / 1024 / 1024).toFixed(1)} MB (Geo)`;
+    document.getElementById('val-loadtime').innerText = `${loadTime} ms`;
+    document.getElementById('val-vram').innerText = `~${(vramSize / 1024 / 1024).toFixed(1)} MB (Geo)`;
     
     log(`Model Loaded in ${loadTime}ms`);
+    // 打印当前剔除状态提示
+    if (!params.frustumCulling) {
+        log("Note: Frustum Culling is OFF (Testing Full Load)");
+    }
+
     centerModel(modelGroup);
 }
 
@@ -311,7 +329,6 @@ function applySimplification(reduceRatio) {
     if (!modelGroup || originalMeshes.length === 0) return;
     if (simplifyTimeout) clearTimeout(simplifyTimeout);
     
-    // UI 显示的是 "Reduce Ratio" (0% - 98%)
     log(`Scheduling Simplification: Reduce ${(reduceRatio * 100).toFixed(0)}% vertices...`);
     
     simplifyTimeout = setTimeout(() => {
@@ -321,28 +338,21 @@ function applySimplification(reduceRatio) {
         originalMeshes.forEach(data => {
             const { mesh, geometry } = data;
             
-            // 1. 如果比率接近 0，说明不需要移除任何点 -> 恢复原始模型
-            if (reduceRatio <= 0.005) { // 0.5% 以下忽略
+            if (reduceRatio <= 0.005) {
                 if(mesh.geometry !== geometry) mesh.geometry = geometry;
                 totalTrianglesAfter += geometry.index ? geometry.index.count/3 : geometry.attributes.position.count/3;
             } else {
-                // 2. 计算需要【移除】的顶点数量
-                // 官方文档：count is the number of vertices to REMOVE.
                 const totalVertices = geometry.attributes.position.count;
                 const countToRemove = Math.floor(totalVertices * reduceRatio);
                 
-                // 至少保留几个点，防止 countToRemove >= totalVertices
                 if (countToRemove >= totalVertices) return; 
                 if (countToRemove <= 0) return;
 
                 try {
-                    // 执行移除
                     const simplified = modifier.modify(geometry, countToRemove);
                     mesh.geometry = simplified;
                     totalTrianglesAfter += simplified.index ? simplified.index.count/3 : simplified.attributes.position.count / 3;
                 } catch (e) { 
-                    console.warn("Simplification error:", e); 
-                    // 出错时保持原样
                     if(mesh.geometry !== geometry) mesh.geometry = geometry;
                 }
             }
@@ -350,7 +360,7 @@ function applySimplification(reduceRatio) {
         
         const time = (performance.now() - startTime).toFixed(0);
         log(`Simp done in ${time}ms. Tris: ${totalTrianglesAfter.toFixed(0)}`);
-    }, 150); // 稍微增加一点延迟，防止滑动过快卡顿
+    }, 150); 
 }
 
 function generateTestCube() {
