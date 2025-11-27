@@ -1,52 +1,37 @@
-body { 
-    margin: 0; 
-    overflow: hidden; 
-    background-color: #1a1a1a; 
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-    color: #e0e0e0; 
-}
-
+body { margin: 0; overflow: hidden; background-color: #1a1a1a; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #e0e0e0; }
 #webgl-canvas { width: 100vw; height: 100vh; display: block; outline: none; }
 
-/* === 左侧面板 (缩小版) === */
+/* 左侧面板 */
 #stats-panel {
-    position: absolute; top: 20px; left: 20px; 
-    width: 280px; /* 宽度缩小 */
-    background: rgba(18, 18, 18, 0.9); border-radius: 6px; padding: 15px; /* Padding缩小 */
+    position: absolute; top: 20px; left: 20px; width: 420px;
+    background: rgba(18, 18, 18, 0.9); border-radius: 6px; padding: 20px;
     border: 1px solid #333; box-shadow: 0 6px 16px rgba(0,0,0,0.6);
     pointer-events: none; z-index: 10;
 }
-.panel-header { 
-    font-size: 14px; /* 字体缩小 */
-    font-weight: bold; letter-spacing: 1px; color: #888; 
-    margin-bottom: 12px; text-transform: uppercase; border-bottom: 1px solid #333; padding-bottom: 6px;
-}
-.metric-row { 
-    display: flex; justify-content: space-between; margin-bottom: 6px; /* 间距缩小 */
-    font-size: 15px; /* 字体缩小 */
-    line-height: 1.4; 
-}
-.label { color: #aaa; font-size: 14px; }
-.value { font-family: 'Consolas', monospace; font-weight: bold; color: #fff; font-size: 15px; }
+.panel-header { font-size: 16px; font-weight: bold; letter-spacing: 1px; color: #888; margin-bottom: 15px; text-transform: uppercase; border-bottom: 1px solid #333; padding-bottom: 8px; }
+.metric-row { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 18px; line-height: 1.4; }
+.label { color: #aaa; }
+.value { font-family: 'Consolas', monospace; font-weight: bold; color: #fff; }
 .value.good { color: #00ff9d; }
-.separator { height: 1px; background: #333; margin: 8px 0; }
+.separator { height: 1px; background: #333; margin: 12px 0; }
 #console-output {
-    margin-top: 15px; padding: 10px; background: #000; border: 1px solid #222;
-    height: 120px; /* 高度稍微缩小 */
-    font-family: 'Consolas', monospace; font-size: 12px; 
+    margin-top: 20px; padding: 12px; background: #000; border: 1px solid #222;
+    height: 160px; font-family: 'Consolas', monospace; font-size: 14px; 
     color: #00ff9d; overflow-y: auto; white-space: pre-wrap; pointer-events: auto;
 }
 
-/* === 右侧面板 (保持不变) === */
+/* 右侧面板 */
 #gui-container {
-    position: absolute; top: 20px; right: 20px; width: 300px;
-    background: rgba(18, 18, 18, 0.9); border-radius: 4px; padding: 15px;
+    position: absolute; top: 20px; right: 20px; width: 320px; 
+    background: rgba(18, 18, 18, 0.95); border-radius: 4px; padding: 15px;
     border: 1px solid #333; z-index: 10;
 }
 .custom-control { margin-bottom: 15px; border-bottom: 1px solid #333; padding-bottom: 15px; }
 .control-label { color: #fba92e; font-weight: bold; font-size: 13px; margin-bottom: 5px; }
 .sub-label { font-size: 11px; color: #666; margin-bottom: 8px; }
 
+/* 按钮组 */
+.button-row { display: flex; gap: 8px; }
 button {
     width: 100%; padding: 8px; border: none; border-radius: 2px; cursor: pointer;
     font-weight: bold; font-size: 12px; margin-top: 5px; transition: background 0.2s; text-transform: uppercase;
@@ -56,6 +41,48 @@ button {
 .btn-secondary { background: #333; color: #ccc; border: 1px solid #444; }
 .btn-secondary:hover { background: #444; color: #fff; }
 
+/* Checkbox & Select */
+.checkbox-wrapper { display: flex; align-items: center; margin-bottom: 12px; }
+.checkbox-wrapper input[type="checkbox"] { accent-color: #007acc; width: 16px; height: 16px; margin-right: 8px; cursor: pointer; }
+.checkbox-wrapper label { font-size: 12px; color: #eee; cursor: pointer; font-weight: bold; }
+
+.geek-select {
+    width: 100%; background: #111; color: #00ff9d; border: 1px solid #444; padding: 8px;
+    border-radius: 4px; outline: none; font-family: 'Segoe UI', sans-serif; font-size: 12px; cursor: pointer; margin-top: 5px;
+}
+.geek-select:hover { border-color: #666; }
+
+/* === UE Style Transform Inputs === */
+.tf-row { margin-bottom: 8px; }
+.tf-label { font-size: 10px; color: #888; margin-bottom: 2px; text-transform: uppercase; }
+.tf-inputs { display: flex; gap: 4px; }
+.tf-field { 
+    display: flex; align-items: center; background: #222; border-radius: 3px; 
+    flex: 1; border: 1px solid #333; overflow: hidden;
+}
+.tf-field:hover { border-color: #555; }
+.axis { 
+    font-size: 10px; font-weight: bold; padding: 0 4px; width: 10px; text-align: center; cursor: default;
+}
+.axis.x { color: #ff5555; } /* Red */
+.axis.y { color: #55ff55; } /* Green */
+.axis.z { color: #5555ff; } /* Blue */
+.tf-field input {
+    width: 100%; background: transparent; border: none; color: #eee;
+    font-family: 'Consolas', monospace; font-size: 11px; padding: 4px; outline: none;
+}
+.tf-field input::-webkit-inner-spin-button, 
+.tf-field input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+.radio-group { display: flex; gap: 10px; margin-top: 5px; }
+.radio-group label {
+    font-size: 11px; color: #ccc; cursor: pointer; display: flex; align-items: center;
+    background: #222; padding: 4px 8px; border-radius: 4px; border: 1px solid #333;
+}
+.radio-group label:hover { background: #333; }
+.radio-group input { margin-right: 5px; accent-color: #007acc; }
+
+/* Range Slider */
 .geek-slider {
     -webkit-appearance: none; width: 100%; height: 6px; background: #333;
     border-radius: 3px; outline: none; margin-top: 5px;
@@ -67,6 +94,7 @@ button {
 }
 .geek-slider::-webkit-slider-thumb:hover { background: #0099ff; }
 
+/* Lil-GUI */
 .lil-gui { 
     --background-color: transparent; --text-color: #eee; --title-background-color: transparent; 
     --widget-color: #444; --hover-color: #555; --focus-color: #666; --number-color: #00ff9d; 
@@ -74,33 +102,23 @@ button {
 }
 .lil-gui .title { display: none; }
 
-/* === 底部图表 (放大 & 抬高) === */
+/* Charts */
 #charts-panel {
-    position: absolute; bottom: 0; left: 0; width: 100%; 
-    height: 280px; /* 高度显著增加 */
-    background: rgba(10, 10, 10, 0.98); border-top: 1px solid #333;
+    position: absolute; bottom: 0; left: 0; width: 100%; height: 190px;
+    background: rgba(10, 10, 10, 0.95); border-top: 1px solid #333;
     display: flex; justify-content: flex-start; align-items: center;
-    padding: 0 20px; box-sizing: border-box; overflow-x: auto; gap: 20px; z-index: 20;
+    padding: 0 20px; box-sizing: border-box; overflow-x: auto; gap: 30px; z-index: 20;
 }
-
 .chart-container {
-    width: 400px; /* 图表宽度变大 */
-    height: 240px; /* 图表高度变大 */
-    background: #161616;
-    border: 1px solid #333; border-radius: 4px; position: relative; flex-shrink: 0;
-    display: flex; flex-direction: column; overflow: hidden;
+    width: 360px; height: 150px; background: #111;
+    border: 1px solid #333; border-radius: 6px; position: relative; flex-shrink: 0;
 }
-
-.chart-header {
-    height: 32px; display: flex; justify-content: space-between; align-items: center;
-    padding: 0 12px; background: #1f1f1f; border-bottom: 1px solid #2a2a2a;
+.chart-title {
+    position: absolute; top: 8px; left: 10px; font-size: 14px; color: #888;
+    text-transform: uppercase; font-weight: bold; pointer-events: none;
 }
-.chart-title { font-size: 14px; text-transform: uppercase; font-weight: bold; }
-.chart-value { font-size: 18px; font-family: 'Consolas', monospace; font-weight: bold; color: #fff; }
-
-.uplot-mount { flex-grow: 1; position: relative; width: 100%; height: 100%; }
-
-/* uPlot 暗色主题适配 */
-.uplot { font-family: 'Consolas', monospace !important; }
-.uplot .u-text { fill: #888 !important; font-size: 11px !important;}
-.uplot .u-series th { color: #ccc !important; }
+.chart-value {
+    position: absolute; top: 28px; left: 10px; font-size: 20px;
+    font-family: 'Consolas', monospace; font-weight: bold; color: #eee; pointer-events: none;
+}
+.chart-canvas { display: block; width: 100%; height: 100%; }

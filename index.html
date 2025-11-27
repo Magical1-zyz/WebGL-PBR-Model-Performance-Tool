@@ -4,9 +4,6 @@
     <meta charset="UTF-8">
     <title>WebGL PBR Model Perf Tool</title>
     <link rel="stylesheet" href="src/style.css">
-    <link rel="stylesheet" href="https://unpkg.com/uplot/dist/uPlot.min.css">
-    <script src="https://unpkg.com/uplot/dist/uPlot.iife.min.js"></script>
-
     <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
     <script type="importmap">
       {
@@ -25,18 +22,12 @@
         <div class="metric-row"><span class="label">FPS:</span><span class="value good" id="val-fps">--</span></div>
         <div class="metric-row"><span class="label">Frame Time:</span><span class="value" id="val-frametime">-- ms</span></div>
         <div class="separator"></div>
-        <div class="metric-row"><span class="label">CPU (Logic):</span><span class="value" id="val-cpu">-- ms</span></div>
-        <div class="metric-row"><span class="label">GPU (Render):</span><span class="value" id="val-gpu">-- ms</span></div>
-        <div class="separator"></div>
         <div class="metric-row"><span class="label">Load Time:</span><span class="value" id="val-loadtime">0 ms</span></div>
         <div class="metric-row"><span class="label">VRAM (Est.):</span><span class="value" id="val-vram">0 MB</span></div>
         <div class="separator"></div>
         <div class="metric-row"><span class="label">Draw Calls:</span><span class="value" id="val-drawcalls">0</span></div>
         <div class="metric-row"><span class="label">Triangles:</span><span class="value" id="val-tris">0</span></div>
-        
-        <div id="console-output">
-            > System Initializing...
-        </div>
+        <div id="console-output">> System Initializing...</div>
     </div>
 
     <div id="gui-container">
@@ -49,23 +40,70 @@
 
         <div class="custom-control">
             <div class="control-label">1. Load Model</div>
-            <div class="sub-label">方式 A: 文件夹 (推荐)</div>
+            <div class="checkbox-wrapper">
+                <input type="checkbox" id="chk-append">
+                <label for="chk-append">Multi-Model Mode (Append)</label>
+            </div>
+            <div class="button-row">
+                <button class="btn-secondary" onclick="document.getElementById('file-input-folder').click()">Folder</button>
+                <button class="btn-primary" onclick="document.getElementById('file-input-files').click()">Files</button>
+            </div>
             <input type="file" id="file-input-folder" webkitdirectory directory multiple style="display:none;">
-            <button class="btn-secondary" onclick="document.getElementById('file-input-folder').click()">Select Folder</button>
-            
-            <div class="sub-label" style="margin-top:8px;">方式 B: 多文件</div>
             <input type="file" id="file-input-files" multiple style="display:none;">
-            <button class="btn-primary" onclick="document.getElementById('file-input-files').click()">Select Files</button>
+        </div>
+
+        <div class="custom-control" id="model-list-container">
+            <div class="control-label">2. Model Hierarchy</div>
+            
+            <select id="model-select" class="geek-select">
+                <option value="-1">None</option>
+            </select>
+
+            <div id="transform-panel" style="margin-top:10px; display:none;">
+                
+                <div class="tf-row">
+                    <div class="tf-label">Location</div>
+                    <div class="tf-inputs">
+                        <div class="tf-field"><span class="axis x">X</span><input type="number" id="pos-x" step="0.1"></div>
+                        <div class="tf-field"><span class="axis y">Y</span><input type="number" id="pos-y" step="0.1"></div>
+                        <div class="tf-field"><span class="axis z">Z</span><input type="number" id="pos-z" step="0.1"></div>
+                    </div>
+                </div>
+
+                <div class="tf-row">
+                    <div class="tf-label">Rotation</div>
+                    <div class="tf-inputs">
+                        <div class="tf-field"><span class="axis x">X</span><input type="number" id="rot-x" step="1"></div>
+                        <div class="tf-field"><span class="axis y">Y</span><input type="number" id="rot-y" step="1"></div>
+                        <div class="tf-field"><span class="axis z">Z</span><input type="number" id="rot-z" step="1"></div>
+                    </div>
+                </div>
+
+                <div class="tf-row">
+                    <div class="tf-label">Scale</div>
+                    <div class="tf-inputs">
+                        <div class="tf-field"><span class="axis x">X</span><input type="number" id="scl-x" step="0.1"></div>
+                        <div class="tf-field"><span class="axis y">Y</span><input type="number" id="scl-y" step="0.1"></div>
+                        <div class="tf-field"><span class="axis z">Z</span><input type="number" id="scl-z" step="0.1"></div>
+                    </div>
+                </div>
+
+                <div class="radio-group" style="margin-top:8px; justify-content:center;">
+                    <label><input type="radio" name="tf-mode" value="translate" checked> Move</label>
+                    <label><input type="radio" name="tf-mode" value="rotate"> Rotate</label>
+                    <label><input type="radio" name="tf-mode" value="scale"> Scale</label>
+                </div>
+            </div>
         </div>
         
         <div class="custom-control">
-            <div class="control-label">2. Environment</div>
+            <div class="control-label">3. Environment</div>
             <input type="file" id="file-input-hdr" accept=".hdr" style="display:none;">
             <button class="btn-secondary" onclick="document.getElementById('file-input-hdr').click()">Select HDR</button>
         </div>
 
         <div class="custom-control">
-            <div class="control-label">3. Simplification (QEM)</div>
+            <div class="control-label">4. Simplification (QEM)</div>
             <div class="sub-label" style="display:flex; justify-content:space-between;">
                 <span>Reduce Ratio</span>
                 <span id="simp-val" style="color:#00ff9d; font-weight:bold;">0%</span>
@@ -74,13 +112,12 @@
         </div>
 
         <div class="custom-control" style="border-bottom:none; padding-bottom:0;">
-            <div class="control-label">4. Render Settings</div>
+            <div class="control-label">5. Render Settings</div>
         </div>
         <div id="lil-gui-mount"></div>
     </div>
 
     <div id="charts-panel"></div>
-
     <script type="module" src="src/main.js"></script>
 </body>
 </html>
