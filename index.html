@@ -63,6 +63,7 @@
             <select id="model-select" class="geek-select">
                 <option value="-1">None</option>
             </select>
+            <div style="font-size:10px; color:#666; margin-top:4px;">* Click model in scene to select</div>
 
             <div id="transform-panel" style="margin-top:10px; display:none;">
                 <div class="tf-row">
@@ -94,6 +95,7 @@
                     <label><input type="radio" name="tf-mode" value="rotate"> Rotate</label>
                     <label><input type="radio" name="tf-mode" value="scale"> Scale</label>
                 </div>
+                <div style="text-align:center; font-size:10px; color:#888; margin-top:5px;">(Hold ALT + Drag to Duplicate)</div>
             </div>
         </div>
         
@@ -105,6 +107,12 @@
 
         <div class="custom-control">
             <div class="control-label">4. Simplification (QEM)</div>
+            
+            <div class="radio-group" style="margin-bottom:8px;">
+                <label style="flex:1; justify-content:center;"><input type="radio" name="simp-scope" value="current"> Current</label>
+                <label style="flex:1; justify-content:center;"><input type="radio" name="simp-scope" value="all" checked> All Models</label>
+            </div>
+
             <div class="sub-label" style="display:flex; justify-content:space-between;">
                 <span>Reduce Ratio</span>
                 <span id="simp-val" style="color:#00ff9d; font-weight:bold;">0%</span>
