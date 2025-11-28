@@ -6,7 +6,7 @@ import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { SimplifyModifier } from 'three/addons/modifiers/SimplifyModifier.js';
 import GUI from 'three/addons/libs/lil-gui.module.min.js';
 
-// === 1. 图表类 ===
+// === 1. 图表类 (已优化纵轴标签) ===
 class PerfChart {
     constructor(name, color, suffix = '', precision = 0) {
         this.name = name;
@@ -43,42 +43,83 @@ class PerfChart {
         
         let min = Math.min(...this.data);
         let max = Math.max(...this.data);
-        if (max === min) max = min + 0.001;
+        if (max === min) max = min + 0.001; // 防止除以零
         const range = max - min;
         
         const ctx = this.ctx;
         const w = this.canvas.width;
         const h = this.canvas.height;
-        const padding = 12;
         
+        // 布局配置
+        const paddingToTop = 15;    // 顶部留白
+        const paddingToBottom = 10; //HK 底部留白
+        const chartHeight = h - paddingToTop - paddingToBottom;
+        const leftMargin = 45;      // 左侧留给文字的宽度
+        const graphWidth = w - leftMargin;
+
         ctx.clearRect(0, 0, w, h);
         
+        // --- 1. 绘制纵轴网格和标签 ---
+        const steps = 4; // 将图表分为4个区间（5条线）
+        ctx.font = '10px Consolas, monospace';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        
+        for(let i = 0; i <= steps; i++) {
+            // 计算当前刻度的归一化位置 (0.0 ~ 1.0)
+            const t = i / steps;
+            
+            // 计算对应的数值
+            const value = min + (range * t);
+            
+            // 计算Y轴像素位置 (Canvas Y轴向下，所以要反转)
+            const y = (h - paddingToBottom) - (t * chartHeight);
+            
+            // 绘制网格线 (深灰色)
+            ctx.beginPath();
+            ctx.strokeStyle = '#2a2a2a'; 
+            ctx.lineWidth = 1;
+            ctx.moveTo(leftMargin, y);
+            ctx.lineTo(w, y);
+            ctx.stroke();
+            
+            // 绘制文字标签
+            ctx.fillStyle = '#666';
+            ctx.fillText(value.toFixed(this.precision), leftMargin - 6, y);
+        }
+
+        // --- 2. 绘制折线图 ---
         ctx.beginPath();
         ctx.strokeStyle = this.color;
         ctx.lineWidth = 2;
         
         for (let i = 0; i < this.data.length; i++) {
-            const x = (i / (this.data.length - 1)) * w;
+            // X坐标：映射到 [leftMargin, w]
+            const x = leftMargin + (i / (this.data.length - 1)) * graphWidth;
+            
+            // Y坐标：映射到 [padding, h-padding]
             const normalized = (this.data[i] - min) / range;
-            const y = h - (normalized * (h - padding * 2) + padding);
+            const y = (h - paddingToBottom) - (normalized * chartHeight);
             
             if (i === 0) ctx.moveTo(x, y); 
             else ctx.lineTo(x, y);
         }
         ctx.stroke();
         
-        ctx.lineTo(w, h);
-        ctx.lineTo(0, h);
+        // --- 3. 填充下方区域 ---
+        ctx.lineTo(w, h - paddingToBottom);
+        ctx.lineTo(leftMargin, h - paddingToBottom);
         ctx.fillStyle = this.hexToRgba(this.color, 0.1); 
         ctx.fill();
-
-        ctx.fillStyle = '#888';
-        ctx.font = '10px Consolas, monospace';
-        ctx.textAlign = 'right';
-        ctx.textBaseline = 'top';
-        ctx.fillText(max.toFixed(this.precision), w - 4, 2);
-        ctx.textBaseline = 'bottom';
-        ctx.fillText(min.toFixed(this.precision), w - 4, h - 2);
+        
+        // (可选) 绘制当前值的指示点
+        // const lastX = w;
+        // const lastNormalized = (this.data[this.data.length-1] - min) / range;
+        // const lastY = (h - paddingToBottom) - (lastNormalized * chartHeight);
+        // ctx.beginPath();
+        // ctx.arc(lastX, lastY, 3, 0, Math.PI * 2);
+        // ctx.fillStyle = '#fff';
+        // ctx.fill();
     }
 
     hexToRgba(hex, alpha) {
@@ -189,8 +230,8 @@ function init() {
 
     // Gizmo
     transformControl = new TransformControls(camera, renderer.domElement);
-    // 初始大小设为 1，但在 animate 中会动态覆盖
-    transformControl.setSize(1.0); 
+    // 初始大小设为 0.4，但在 animate 中会动态覆盖
+    transformControl.setSize(0.4); 
     transformControl.addEventListener('dragging-changed', function (event) {
         controls.enabled = !event.value;
     });
@@ -726,8 +767,8 @@ function animate() {
     if (transformControl && transformControl.object) {
         const dist = camera.position.distanceTo(transformControl.object.position);
         if (dist > 0 && selectedModelRadius > 0) {
-            // 3.0 是一个视觉系数，你可以根据需要调整
-            transformControl.size = (selectedModelRadius / dist) * 3.0;
+            // 2.0 是一个视觉系数，你可以根据需要调整
+            transformControl.size = (selectedModelRadius / dist) * 2.0;
         } else {
             transformControl.size = 0.5; // 兜底
         }
