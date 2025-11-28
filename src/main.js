@@ -8,10 +8,11 @@ import GUI from 'three/addons/libs/lil-gui.module.min.js';
 
 // === 1. 图表类 ===
 class PerfChart {
-    constructor(name, color, suffix = '') {
+    constructor(name, color, suffix = '', precision = 0) {
         this.name = name;
         this.color = color; 
         this.suffix = suffix;
+        this.precision = precision;
         this.data = new Array(60).fill(0);
         
         let panel = document.getElementById('charts-panel');
@@ -25,7 +26,7 @@ class PerfChart {
         this.dom.className = 'chart-container';
         this.dom.innerHTML = `
             <div class="chart-title" style="color:${color}">${name}</div>
-            <div class="chart-value">${0}</div>
+            <div class="chart-value">${(0).toFixed(precision)}${suffix}</div>
             <canvas class="chart-canvas" width="360" height="150"></canvas> 
         `;
         panel.appendChild(this.dom);
@@ -38,17 +39,17 @@ class PerfChart {
     update(val) {
         this.data.shift();
         this.data.push(val);
-        this.valueDom.innerText = val.toLocaleString() + this.suffix;
+        this.valueDom.innerText = val.toFixed(this.precision) + this.suffix;
         
         let min = Math.min(...this.data);
         let max = Math.max(...this.data);
-        if (max === min) max = min + 1;
+        if (max === min) max = min + 0.001;
         const range = max - min;
         
         const ctx = this.ctx;
         const w = this.canvas.width;
         const h = this.canvas.height;
-        const padding = 8;
+        const padding = 12;
         
         ctx.clearRect(0, 0, w, h);
         
@@ -65,10 +66,19 @@ class PerfChart {
             else ctx.lineTo(x, y);
         }
         ctx.stroke();
+        
         ctx.lineTo(w, h);
         ctx.lineTo(0, h);
         ctx.fillStyle = this.hexToRgba(this.color, 0.1); 
         ctx.fill();
+
+        ctx.fillStyle = '#888';
+        ctx.font = '10px Consolas, monospace';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'top';
+        ctx.fillText(max.toFixed(this.precision), w - 4, 2);
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(min.toFixed(this.precision), w - 4, h - 2);
     }
 
     hexToRgba(hex, alpha) {
@@ -79,7 +89,7 @@ class PerfChart {
     }
 }
 
-// === GPU 计时器辅助类 (使用 WebGL2 扩展) ===
+// === GPU 计时器 ===
 class GPUTimer {
     constructor(renderer) {
         this.renderer = renderer;
@@ -87,9 +97,7 @@ class GPUTimer {
         this.ext = this.gl.getExtension('EXT_disjoint_timer_query_webgl2');
         this.queries = [];
         this.available = !!this.ext;
-        if (!this.available) {
-            console.warn("GPU Timer: EXT_disjoint_timer_query_webgl2 not supported. GPU time will be N/A.");
-        }
+        if (!this.available) console.warn("GPU Timer N/A");
     }
 
     start() {
@@ -104,11 +112,8 @@ class GPUTimer {
         this.gl.endQuery(this.ext.TIME_ELAPSED_EXT);
     }
 
-    // 获取上一帧或更早的查询结果 (非阻塞)
     poll() {
         if (!this.available || this.queries.length === 0) return null;
-
-        // 检查最早的查询是否完成
         const query = this.queries[0];
         const available = this.gl.getQueryParameter(query, this.gl.QUERY_RESULT_AVAILABLE);
         
@@ -116,14 +121,13 @@ class GPUTimer {
             const timeNs = this.gl.getQueryParameter(query, this.gl.QUERY_RESULT);
             this.gl.deleteQuery(query);
             this.queries.shift();
-            return timeNs / 1000000; // ns -> ms
+            return timeNs / 1000000;
         } else if (available) {
-            // 查询失效 (Disjoint)，清理
             this.gl.deleteQuery(query);
             this.queries.shift();
             return null;
         }
-        return null; // 还没准备好
+        return null;
     }
 }
 
@@ -137,7 +141,8 @@ let lastTime = performance.now();
 let frameCount = 0;
 let isLoopRunning = false;
 let selectedModelIndex = -1; 
-let gpuTimer; // GPU 计时器实例
+let gpuTimer;
+let selectedModelRadius = 1.0; // 当前选中模型的半径，用于计算 Gizmo 大小
 
 const params = {
     unlockFPS: false,
@@ -176,7 +181,6 @@ function init() {
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-    // 初始化 GPU 计时器
     gpuTimer = new GPUTimer(renderer);
 
     controls = new OrbitControls(camera, renderer.domElement);
@@ -185,7 +189,8 @@ function init() {
 
     // Gizmo
     transformControl = new TransformControls(camera, renderer.domElement);
-    transformControl.setSize(0.4); 
+    // 初始大小设为 1，但在 animate 中会动态覆盖
+    transformControl.setSize(1.0); 
     transformControl.addEventListener('dragging-changed', function (event) {
         controls.enabled = !event.value;
     });
@@ -209,15 +214,14 @@ function init() {
     initGUI();
     initFileHandlers();
     
-    // 初始化所有图表，包括新增的 CPU 和 GPU
     try {
         charts = {
-            fps: new PerfChart('FPS', '#00ff9d'),          
-            ms: new PerfChart('Frame Time', '#00ccff', ' ms'), 
-            cpu: new PerfChart('CPU Time', '#ffa500', ' ms'),  // 橙色
-            gpu: new PerfChart('GPU Time', '#d600ff', ' ms'),  // 紫色
-            calls: new PerfChart('Draw Calls', '#ffcc00'),     
-            tris: new PerfChart('Triangles', '#ff5555')        
+            fps: new PerfChart('FPS', '#00ff9d', '', 0),          
+            ms: new PerfChart('Frame Time', '#00ccff', ' ms', 2), 
+            cpu: new PerfChart('CPU Time', '#ffa500', ' ms', 3), 
+            gpu: new PerfChart('GPU Time', '#d600ff', ' ms', 3), 
+            calls: new PerfChart('Draw Calls', '#ffcc00', '', 0),     
+            tris: new PerfChart('Triangles', '#ff5555', '', 0)        
         };
     } catch(e) { console.error(e); }
     
@@ -265,6 +269,7 @@ function deleteSelectedModel() {
 
     loadedModels.splice(selectedModelIndex, 1);
     selectedModelIndex = -1;
+    selectedModelRadius = 1.0; // 重置
     updateModelSelectUI();
     updateVRAMEst();
     
@@ -278,17 +283,8 @@ function initGUI() {
     if (modelSelect) {
         modelSelect.addEventListener('change', (e) => {
             const index = parseInt(e.target.value);
-            selectedModelIndex = index;
-            
-            if (index === -1) {
-                transformControl.detach();
-                if(tfPanel) tfPanel.style.display = 'none';
-            } else if (loadedModels[index]) {
-                const model = loadedModels[index].object;
-                transformControl.attach(model);
-                if(tfPanel) tfPanel.style.display = 'block';
-                updateTransformUI(model);
-            }
+            // 切换选中
+            selectModelByIndex(index);
         });
     }
 
@@ -323,7 +319,6 @@ function initGUI() {
 
     const gui = new GUI({ container: document.getElementById('lil-gui-mount'), width: '100%' });
     
-    // 这里不再包含 "Simulate Low GPU" 的功能，因为您说不需要
     gui.add(params, 'unlockFPS').name('Unlock FPS Limit')
        .onChange(v => log(v ? "FPS Unlocked" : "FPS Locked"));
 
@@ -335,6 +330,32 @@ function initGUI() {
         if(mainGroup) mainGroup.rotation.y = THREE.MathUtils.degToRad(v);
     });
     gui.add(params, 'resetCam').name('Reset Camera');
+}
+
+// 辅助函数：根据索引选中模型，并计算其半径
+function selectModelByIndex(index) {
+    selectedModelIndex = index;
+    const tfPanel = document.getElementById('transform-panel');
+    
+    if (index === -1 || !loadedModels[index]) {
+        transformControl.detach();
+        if(tfPanel) tfPanel.style.display = 'none';
+        selectedModelRadius = 1.0;
+    } else {
+        const model = loadedModels[index].object;
+        transformControl.attach(model);
+        if(tfPanel) tfPanel.style.display = 'block';
+        updateTransformUI(model);
+        
+        // 计算包围盒半径，用于动态调整 Gizmo 大小
+        const box = new THREE.Box3().setFromObject(model);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        // 取最大边的一半作为参考半径
+        selectedModelRadius = Math.max(size.x, size.y, size.z) * 0.5;
+        // 防止太小
+        if(selectedModelRadius < 0.1) selectedModelRadius = 0.1;
+    }
 }
 
 function updateVRAMEst() {
@@ -427,7 +448,6 @@ function updateModelFromUI(model) {
 
 function updateModelSelectUI() {
     const select = document.getElementById('model-select');
-    const tfPanel = document.getElementById('transform-panel');
     
     if (!select) return;
 
@@ -445,18 +465,11 @@ function updateModelSelectUI() {
             selectedModelIndex = loadedModels.length - 1;
         }
         select.value = selectedModelIndex;
-        if (loadedModels[selectedModelIndex]) {
-            transformControl.attach(loadedModels[selectedModelIndex].object);
-            if(tfPanel) {
-                tfPanel.style.display = 'block';
-                updateTransformUI(loadedModels[selectedModelIndex].object);
-            }
-        }
+        // 调用封装好的选中逻辑
+        selectModelByIndex(selectedModelIndex);
     } else {
         select.value = -1;
-        selectedModelIndex = -1;
-        transformControl.detach();
-        if(tfPanel) tfPanel.style.display = 'none';
+        selectModelByIndex(-1);
     }
 }
 
@@ -705,60 +718,59 @@ function animate() {
     const now = performance.now();
     frameCount++;
     
-    // Gizmo 动态缩放
-    if (transformControl && transformControl.object) {
-        const dist = camera.position.distanceTo(transformControl.object.position);
-        transformControl.size = 0.4 * (dist / 10); 
-    }
-
     controls.update();
 
-    // 1. CPU 时间开始
-    const cpuStart = performance.now();
+    // === 核心修复：Gizmo 大小动态调整 ===
+    // 逻辑：(模型半径 / 相机距离) * 系数
+    // 这样当相机拉远 (distance变大) 时，size 变小，从而看起来像是"附着"在模型上，而不是占据整个屏幕
+    if (transformControl && transformControl.object) {
+        const dist = camera.position.distanceTo(transformControl.object.position);
+        if (dist > 0 && selectedModelRadius > 0) {
+            // 3.0 是一个视觉系数，你可以根据需要调整
+            transformControl.size = (selectedModelRadius / dist) * 3.0;
+        } else {
+            transformControl.size = 0.5; // 兜底
+        }
+    }
 
-    // 2. GPU 计时开始
+    // 1. 计时开始
+    const cpuStart = performance.now();
     gpuTimer.start();
 
-    // 3. 渲染场景
+    // 2. 渲染
     renderer.render(scene, camera);
 
-    // 4. GPU 计时结束
+    // 3. 计时结束
     gpuTimer.end();
-
-    // 5. CPU 时间结束
     const cpuEnd = performance.now();
     const cpuTime = cpuEnd - cpuStart;
 
-    // 6. 统计数据
     if (now - lastTime >= 500) {
         const timeDiff = now - lastTime;
         const fps = Math.round((frameCount * 1000) / timeDiff);
         const frameTime = (timeDiff / frameCount).toFixed(2);
         
-        // 获取 GPU 时间（可能为 null）
         const gpuTimeRaw = gpuTimer.poll();
-        const gpuTimeStr = gpuTimeRaw !== null ? gpuTimeRaw.toFixed(2) : "N/A";
+        const gpuTimeStr = gpuTimeRaw !== null ? gpuTimeRaw.toFixed(3) : "N/A";
         
         const calls = renderer.info.render.calls;
         const tris = renderer.info.render.triangles;
         
-        // 更新 UI
-        const elFps = document.getElementById('val-fps');
-        if(elFps) {
+        const fpsEl = document.getElementById('val-fps');
+        if(fpsEl) {
             document.getElementById('val-fps').innerText = fps;
             document.getElementById('val-frametime').innerText = frameTime + " ms";
-            document.getElementById('val-cpu').innerText = cpuTime.toFixed(2) + " ms"; // CPU
-            document.getElementById('val-gpu').innerText = gpuTimeStr + " ms"; // GPU
+            document.getElementById('val-cpu').innerText = cpuTime.toFixed(3) + " ms";
+            document.getElementById('val-gpu').innerText = gpuTimeStr + " ms";
             document.getElementById('val-drawcalls').innerText = calls;
             document.getElementById('val-tris').innerText = tris;
         }
 
-        // 更新图表
         if (charts.fps) {
             charts.fps.update(fps);
             charts.ms.update(parseFloat(frameTime));
-            charts.cpu.update(cpuTime); // CPU Chart
-            if (gpuTimeRaw !== null) charts.gpu.update(gpuTimeRaw); // GPU Chart
+            charts.cpu.update(cpuTime);
+            if (gpuTimeRaw !== null) charts.gpu.update(gpuTimeRaw);
             charts.calls.update(calls);
             charts.tris.update(tris);
         }
