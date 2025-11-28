@@ -79,6 +79,54 @@ class PerfChart {
     }
 }
 
+// === GPU 计时器辅助类 (使用 WebGL2 扩展) ===
+class GPUTimer {
+    constructor(renderer) {
+        this.renderer = renderer;
+        this.gl = renderer.getContext();
+        this.ext = this.gl.getExtension('EXT_disjoint_timer_query_webgl2');
+        this.queries = [];
+        this.available = !!this.ext;
+        if (!this.available) {
+            console.warn("GPU Timer: EXT_disjoint_timer_query_webgl2 not supported. GPU time will be N/A.");
+        }
+    }
+
+    start() {
+        if (!this.available) return;
+        const query = this.gl.createQuery();
+        this.gl.beginQuery(this.ext.TIME_ELAPSED_EXT, query);
+        this.queries.push(query);
+    }
+
+    end() {
+        if (!this.available) return;
+        this.gl.endQuery(this.ext.TIME_ELAPSED_EXT);
+    }
+
+    // 获取上一帧或更早的查询结果 (非阻塞)
+    poll() {
+        if (!this.available || this.queries.length === 0) return null;
+
+        // 检查最早的查询是否完成
+        const query = this.queries[0];
+        const available = this.gl.getQueryParameter(query, this.gl.QUERY_RESULT_AVAILABLE);
+        
+        if (available && !this.gl.getParameter(this.ext.GPU_DISJOINT_EXT)) {
+            const timeNs = this.gl.getQueryParameter(query, this.gl.QUERY_RESULT);
+            this.gl.deleteQuery(query);
+            this.queries.shift();
+            return timeNs / 1000000; // ns -> ms
+        } else if (available) {
+            // 查询失效 (Disjoint)，清理
+            this.gl.deleteQuery(query);
+            this.queries.shift();
+            return null;
+        }
+        return null; // 还没准备好
+    }
+}
+
 // === 2. 全局变量 ===
 let camera, scene, renderer, controls, transformControl;
 let mainGroup; 
@@ -89,6 +137,7 @@ let lastTime = performance.now();
 let frameCount = 0;
 let isLoopRunning = false;
 let selectedModelIndex = -1; 
+let gpuTimer; // GPU 计时器实例
 
 const params = {
     unlockFPS: false,
@@ -127,17 +176,19 @@ function init() {
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
+    // 初始化 GPU 计时器
+    gpuTimer = new GPUTimer(renderer);
+
     controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
 
-    // Gizmo 设置
+    // Gizmo
     transformControl = new TransformControls(camera, renderer.domElement);
-    transformControl.setSize(0.6); // 初始大小
+    transformControl.setSize(0.4); 
     transformControl.addEventListener('dragging-changed', function (event) {
         controls.enabled = !event.value;
     });
-    // Gizmo 拖动时同步更新 UI
     transformControl.addEventListener('change', function () {
         if (selectedModelIndex !== -1 && loadedModels[selectedModelIndex]) {
             updateTransformUI(loadedModels[selectedModelIndex].object);
@@ -158,10 +209,13 @@ function init() {
     initGUI();
     initFileHandlers();
     
+    // 初始化所有图表，包括新增的 CPU 和 GPU
     try {
         charts = {
             fps: new PerfChart('FPS', '#00ff9d'),          
             ms: new PerfChart('Frame Time', '#00ccff', ' ms'), 
+            cpu: new PerfChart('CPU Time', '#ffa500', ' ms'),  // 橙色
+            gpu: new PerfChart('GPU Time', '#d600ff', ' ms'),  // 紫色
             calls: new PerfChart('Draw Calls', '#ffcc00'),     
             tris: new PerfChart('Triangles', '#ff5555')        
         };
@@ -176,63 +230,48 @@ function init() {
     updateModelSelectUI();
 }
 
-// === 键盘事件处理 ===
 function onKeyDown(event) {
     if (event.key === 'Delete' || event.key === 'Backspace') {
-        // 确保焦点不在输入框里时才删除
         if (document.activeElement.tagName !== 'INPUT') {
             deleteSelectedModel();
         }
     }
 }
 
-// === 删除模型逻辑 ===
 function deleteSelectedModel() {
-    if (selectedModelIndex === -1 || !loadedModels[selectedModelIndex]) {
-        return;
-    }
+    if (selectedModelIndex === -1 || !loadedModels[selectedModelIndex]) return;
 
     const modelToRemove = loadedModels[selectedModelIndex].object;
     const modelName = loadedModels[selectedModelIndex].name;
 
-    // 1. 从场景中移除
     mainGroup.remove(modelToRemove);
     transformControl.detach();
 
-    // 2. 清理 originalMeshes (用于简化算法的缓存)
-    // 必须从数组中移除属于该模型的 mesh，否则简化器会报错
     const meshesToRemove = new Set();
     modelToRemove.traverse(child => {
         if(child.isMesh) meshesToRemove.add(child);
     });
     originalMeshes = originalMeshes.filter(item => !meshesToRemove.has(item.mesh));
 
-    // 3. 释放内存 (Geometry & Material)
     modelToRemove.traverse(child => {
         if (child.isMesh) {
             if (child.geometry) child.geometry.dispose();
             if (child.material) {
-                if (Array.isArray(child.material)) {
-                    child.material.forEach(m => m.dispose());
-                } else {
-                    child.material.dispose();
-                }
+                if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+                else child.material.dispose();
             }
         }
     });
 
-    // 4. 从列表中移除
     loadedModels.splice(selectedModelIndex, 1);
-
-    // 5. 重置 UI
     selectedModelIndex = -1;
     updateModelSelectUI();
+    updateVRAMEst();
     
     log(`Deleted Model: ${modelName}`);
 }
 
 function initGUI() {
-    // 1. 模型选择与变换
     const modelSelect = document.getElementById('model-select');
     const tfPanel = document.getElementById('transform-panel');
     
@@ -253,7 +292,6 @@ function initGUI() {
         });
     }
 
-    // 2. 变换模式切换
     const modes = document.getElementsByName('tf-mode');
     modes.forEach(btn => {
         btn.addEventListener('change', (e) => {
@@ -261,7 +299,6 @@ function initGUI() {
         });
     });
 
-    // 3. 监听 Transform 输入框 (UI -> Model)
     const tfInputs = document.querySelectorAll('.tf-field input');
     tfInputs.forEach(input => {
         input.addEventListener('input', () => {
@@ -271,7 +308,6 @@ function initGUI() {
         });
     });
 
-    // 4. 简化滑块
     const slider = document.getElementById('simp-slider');
     const sliderVal = document.getElementById('simp-val');
     if (slider) {
@@ -287,14 +323,12 @@ function initGUI() {
 
     const gui = new GUI({ container: document.getElementById('lil-gui-mount'), width: '100%' });
     
+    // 这里不再包含 "Simulate Low GPU" 的功能，因为您说不需要
     gui.add(params, 'unlockFPS').name('Unlock FPS Limit')
-       .onChange(v => log(v ? "FPS Unlocked (High CPU)" : "FPS Locked (VSync)"));
+       .onChange(v => log(v ? "FPS Unlocked" : "FPS Locked"));
 
-    gui.add(params, 'frustumCulling').name('Frustum Culling')
-       .onChange(updateCullingSettings);
-
+    gui.add(params, 'frustumCulling').name('Frustum Culling').onChange(updateCullingSettings);
     gui.add(params, 'doubleSided').name('Double Sided').onChange(updateMaterialSide);
-       
     gui.add(params, 'exposure', 0.1, 5.0).name('Exposure').onChange(v => renderer.toneMappingExposure = v);
     gui.add(params, 'blur', 0, 1).name('BG Blur').onChange(v => scene.backgroundBlurriness = v);
     gui.add(params, 'rotation', 0, 360).name('Auto Rotation').onChange(v => {
@@ -303,21 +337,59 @@ function initGUI() {
     gui.add(params, 'resetCam').name('Reset Camera');
 }
 
+function updateVRAMEst() {
+    let bytes = 0;
+    let geoCount = 0;
+    let texCount = 0;
+    const geometries = new Set();
+    const textures = new Set();
+
+    mainGroup.traverse(c => {
+        if (c.isMesh) {
+            if (c.geometry) geometries.add(c.geometry);
+            if (c.material) {
+                const mats = Array.isArray(c.material) ? c.material : [c.material];
+                mats.forEach(m => {
+                    for (const key in m) {
+                        if (m[key] && m[key].isTexture) textures.add(m[key]);
+                    }
+                });
+            }
+        }
+    });
+
+    geometries.forEach(g => {
+        geoCount++;
+        for (const name in g.attributes) bytes += g.attributes[name].array.byteLength;
+        if (g.index) bytes += g.index.array.byteLength;
+    });
+
+    textures.forEach(t => {
+        texCount++;
+        if (t.image) {
+            const w = t.image.width || 1024;
+            const h = t.image.height || 1024;
+            bytes += w * h * 4 * 1.33; 
+        }
+    });
+
+    const mb = (bytes / 1024 / 1024).toFixed(2);
+    document.getElementById('val-vram').innerText = `${mb} MB (${geoCount} Geo, ${texCount} Tex)`;
+}
+
 function updateMaterialSide(isDouble) {
     if (!mainGroup) return;
     let count = 0;
     mainGroup.traverse((child) => {
         if (child.isMesh && child.material) {
-            // THREE.DoubleSide = 2, THREE.FrontSide = 0
             child.material.side = isDouble ? THREE.DoubleSide : THREE.FrontSide;
-            child.material.needsUpdate = true; // 必须标记更新
+            child.material.needsUpdate = true; 
             count++;
         }
     });
     log(`Materials Updated: ${isDouble ? "Double Sided" : "Front Side Only"} (${count} meshes)`);
 }
 
-// Model -> UI
 function updateTransformUI(model) {
     document.getElementById('pos-x').value = parseFloat(model.position.x.toFixed(2));
     document.getElementById('pos-y').value = parseFloat(model.position.y.toFixed(2));
@@ -332,7 +404,6 @@ function updateTransformUI(model) {
     document.getElementById('scl-z').value = parseFloat(model.scale.z.toFixed(2));
 }
 
-// UI -> Model
 function updateModelFromUI(model) {
     const px = parseFloat(document.getElementById('pos-x').value) || 0;
     const py = parseFloat(document.getElementById('pos-y').value) || 0;
@@ -369,15 +440,11 @@ function updateModelSelectUI() {
         select.appendChild(option);
     });
 
-    // 只有当列表不为空时才尝试自动选择
     if (loadedModels.length > 0) {
-        // 如果当前选择无效 (比如刚删除完)，则选择最后一个
         if (selectedModelIndex < 0 || selectedModelIndex >= loadedModels.length) {
             selectedModelIndex = loadedModels.length - 1;
         }
-        
         select.value = selectedModelIndex;
-        
         if (loadedModels[selectedModelIndex]) {
             transformControl.attach(loadedModels[selectedModelIndex].object);
             if(tfPanel) {
@@ -386,7 +453,6 @@ function updateModelSelectUI() {
             }
         }
     } else {
-        // 如果列表空了
         select.value = -1;
         selectedModelIndex = -1;
         transformControl.detach();
@@ -496,11 +562,8 @@ function onModelLoaded(object, startTime, modelName) {
         name: modelName,
         object: object
     });
-
-    // 更新列表时，让它自动选中新加载的模型
-    selectedModelIndex = loadedModels.length - 1;
-    updateModelSelectUI();
     
+    selectedModelIndex = loadedModels.length - 1;
     updateModelSelectUI();
 
     let vramSize = 0;
@@ -509,8 +572,8 @@ function onModelLoaded(object, startTime, modelName) {
             child.castShadow = true;
             child.receiveShadow = true;
             child.frustumCulled = params.frustumCulling;
-
-            if(child.material) {
+            
+            if (child.material) {
                 child.material.side = params.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
             }
 
@@ -529,9 +592,10 @@ function onModelLoaded(object, startTime, modelName) {
 
     const loadTime = (performance.now() - startTime).toFixed(0);
     document.getElementById('val-loadtime').innerText = `${loadTime} ms`;
-    document.getElementById('val-vram').innerText = `~${(vramSize / 1024 / 1024).toFixed(1)} MB (Geo)`;
     
-    log(`Model Added. Total: ${loadedModels.length}`);
+    updateVRAMEst();
+    
+    log(`Model Added. Double Sided: ${params.doubleSided}`);
 
     if (loadedModels.length === 1) {
         fitCameraToSelection(mainGroup);
@@ -601,6 +665,8 @@ function applySimplification(reduceRatio) {
             }
         });
         
+        updateVRAMEst();
+        
         const time = (performance.now() - startTime).toFixed(0);
         log(`Simp done in ${time}ms. Tris: ${totalTrianglesAfter.toFixed(0)}`);
     }, 150); 
@@ -628,6 +694,7 @@ function onWindowResize() {
     renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
+// === 核心渲染循环 ===
 function animate() {
     if (params.unlockFPS) {
         setTimeout(animate, 0);
@@ -638,33 +705,60 @@ function animate() {
     const now = performance.now();
     frameCount++;
     
-    // === Gizmo 动态缩放逻辑 ===
+    // Gizmo 动态缩放
     if (transformControl && transformControl.object) {
         const dist = camera.position.distanceTo(transformControl.object.position);
-        // 6.0 是基准尺寸系数，距离越远 dist 越大，结果越小
-        // 从而抵消 Gizmo 默认的屏幕恒定大小逻辑，实现近大远小
-        transformControl.size = 6.0 / dist; 
+        transformControl.size = 0.4 * (dist / 10); 
     }
 
+    controls.update();
+
+    // 1. CPU 时间开始
+    const cpuStart = performance.now();
+
+    // 2. GPU 计时开始
+    gpuTimer.start();
+
+    // 3. 渲染场景
+    renderer.render(scene, camera);
+
+    // 4. GPU 计时结束
+    gpuTimer.end();
+
+    // 5. CPU 时间结束
+    const cpuEnd = performance.now();
+    const cpuTime = cpuEnd - cpuStart;
+
+    // 6. 统计数据
     if (now - lastTime >= 500) {
         const timeDiff = now - lastTime;
         const fps = Math.round((frameCount * 1000) / timeDiff);
         const frameTime = (timeDiff / frameCount).toFixed(2);
         
+        // 获取 GPU 时间（可能为 null）
+        const gpuTimeRaw = gpuTimer.poll();
+        const gpuTimeStr = gpuTimeRaw !== null ? gpuTimeRaw.toFixed(2) : "N/A";
+        
         const calls = renderer.info.render.calls;
         const tris = renderer.info.render.triangles;
         
-        const fpsEl = document.getElementById('val-fps');
-        if(fpsEl) {
+        // 更新 UI
+        const elFps = document.getElementById('val-fps');
+        if(elFps) {
             document.getElementById('val-fps').innerText = fps;
             document.getElementById('val-frametime').innerText = frameTime + " ms";
+            document.getElementById('val-cpu').innerText = cpuTime.toFixed(2) + " ms"; // CPU
+            document.getElementById('val-gpu').innerText = gpuTimeStr + " ms"; // GPU
             document.getElementById('val-drawcalls').innerText = calls;
             document.getElementById('val-tris').innerText = tris;
         }
 
+        // 更新图表
         if (charts.fps) {
             charts.fps.update(fps);
             charts.ms.update(parseFloat(frameTime));
+            charts.cpu.update(cpuTime); // CPU Chart
+            if (gpuTimeRaw !== null) charts.gpu.update(gpuTimeRaw); // GPU Chart
             charts.calls.update(calls);
             charts.tris.update(tris);
         }
@@ -672,9 +766,6 @@ function animate() {
         frameCount = 0;
         lastTime = now;
     }
-
-    controls.update();
-    renderer.render(scene, camera);
 }
 
 if (!isLoopRunning) {

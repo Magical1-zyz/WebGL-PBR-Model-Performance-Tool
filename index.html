@@ -22,12 +22,18 @@
         <div class="metric-row"><span class="label">FPS:</span><span class="value good" id="val-fps">--</span></div>
         <div class="metric-row"><span class="label">Frame Time:</span><span class="value" id="val-frametime">-- ms</span></div>
         <div class="separator"></div>
+        <div class="metric-row"><span class="label">CPU Time:</span><span class="value" id="val-cpu">-- ms</span></div>
+        <div class="metric-row"><span class="label">GPU Time:</span><span class="value" id="val-gpu">-- ms</span></div>
+        <div class="separator"></div>
         <div class="metric-row"><span class="label">Load Time:</span><span class="value" id="val-loadtime">0 ms</span></div>
         <div class="metric-row"><span class="label">VRAM (Est.):</span><span class="value" id="val-vram">0 MB</span></div>
         <div class="separator"></div>
         <div class="metric-row"><span class="label">Draw Calls:</span><span class="value" id="val-drawcalls">0</span></div>
         <div class="metric-row"><span class="label">Triangles:</span><span class="value" id="val-tris">0</span></div>
-        <div id="console-output">> System Initializing...</div>
+        
+        <div id="console-output">
+            > System Initializing...
+        </div>
     </div>
 
     <div id="gui-container">
@@ -60,7 +66,6 @@
             </select>
 
             <div id="transform-panel" style="margin-top:10px; display:none;">
-                
                 <div class="tf-row">
                     <div class="tf-label">Location</div>
                     <div class="tf-inputs">
@@ -69,7 +74,6 @@
                         <div class="tf-field"><span class="axis z">Z</span><input type="number" id="pos-z" step="0.1"></div>
                     </div>
                 </div>
-
                 <div class="tf-row">
                     <div class="tf-label">Rotation</div>
                     <div class="tf-inputs">
@@ -78,7 +82,6 @@
                         <div class="tf-field"><span class="axis z">Z</span><input type="number" id="rot-z" step="1"></div>
                     </div>
                 </div>
-
                 <div class="tf-row">
                     <div class="tf-label">Scale</div>
                     <div class="tf-inputs">
@@ -87,7 +90,6 @@
                         <div class="tf-field"><span class="axis z">Z</span><input type="number" id="scl-z" step="0.1"></div>
                     </div>
                 </div>
-
                 <div class="radio-group" style="margin-top:8px; justify-content:center;">
                     <label><input type="radio" name="tf-mode" value="translate" checked> Move</label>
                     <label><input type="radio" name="tf-mode" value="rotate"> Rotate</label>
@@ -118,6 +120,7 @@
     </div>
 
     <div id="charts-panel"></div>
+
     <script type="module" src="src/main.js"></script>
 </body>
 </html>
