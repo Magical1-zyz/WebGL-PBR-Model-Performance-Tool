@@ -192,6 +192,7 @@ const params = {
     unlockFPS: false,
     frustumCulling: false,
     doubleSided: true,
+    WireframeMode: 'None',
     exposure: 1.0,
     blur: 0.0,
     rotation: 0,
@@ -295,7 +296,7 @@ function init() {
 
     updateModelSelectUI();
 
-    const defaultHDRPath = 'data/irrmaps/citrus_orchard_puresky_1k.hdr'; 
+    const defaultHDRPath = 'data/irrmaps/afrikaans_church_exterior_1k.hdr'; 
 
     new RGBELoader().load(defaultHDRPath, (texture) => {
         texture.mapping = THREE.EquirectangularReflectionMapping;
@@ -628,12 +629,74 @@ function initGUI() {
 
     gui.add(params, 'frustumCulling').name('Frustum Culling').onChange(updateCullingSettings);
     gui.add(params, 'doubleSided').name('Double Sided').onChange(updateMaterialSide);
+    gui.add(params, 'wireframeMode', ['None', 'Wireframe Only', 'Mixed (Overlay)'])
+       .name('Wireframe Mode')
+       .onChange(updateWireframeMode);
     gui.add(params, 'exposure', 0.1, 5.0).name('Exposure').onChange(v => renderer.toneMappingExposure = v);
     gui.add(params, 'blur', 0, 1).name('BG Blur').onChange(v => scene.backgroundBlurriness = v);
     gui.add(params, 'rotation', 0, 360).name('Auto Rotation').onChange(v => {
         if (mainGroup) mainGroup.rotation.y = THREE.MathUtils.degToRad(v);
     });
     gui.add(params, 'resetCam').name('Reset Camera');
+}
+
+function updateWireframeMode(mode) {
+    if (!mainGroup) return;
+
+    mainGroup.traverse(child => {
+        // 只处理原始模型网格
+        if (child.isMesh && child.userData.isModelMesh) {
+            
+            // 1. 处理 "Wireframe Only" 模式 (修改材质)
+            if (child.material) {
+                const materials = Array.isArray(child.material) ? child.material : [child.material];
+                materials.forEach(mat => {
+                    mat.wireframe = (mode === 'Wireframe Only');
+                });
+            }
+
+            // 2. 处理 "Mixed (Overlay)" 模式 (添加/显示子物体)
+            let wireframeChild = child.children.find(c => c.userData.isWireframeMesh);
+            
+            if (mode === 'Mixed (Overlay)') {
+                if (!wireframeChild) {
+                    // 如果不存在叠加网格，则创建
+                    const wireGeo = new THREE.WireframeGeometry(child.geometry); // 使用WireframeGeometry优化显示
+                    const wireMat = new THREE.LineBasicMaterial({ 
+                        color: 0x00ffff, // 青色线框
+                        depthTest: true,
+                        opacity: 0.5,
+                        transparent: true
+                    }); 
+                    
+                    // 使用 LineSegments 渲染 WireframeGeometry
+                    // 注意：这里不用 MeshBasicMaterial wireframe，因为 WireframeGeometry 对三角面处理更好看（不显对角线）
+                    // 但为了和 SimplifyModifier 兼容，简单的 Mesh clone 也许更稳定？
+                    // 为了性能和简化同步，我们还是用 Clone Mesh + wireframe material 方案
+                    const overlayMesh = new THREE.Mesh(child.geometry, new THREE.MeshBasicMaterial({
+                        color: 0x00ffff,
+                        wireframe: true,
+                        side: THREE.DoubleSide,
+                        depthTest: true,
+                        polygonOffset: true, // 防止 Z-Fighting
+                        polygonOffsetFactor: 1, 
+                        polygonOffsetUnits: 1
+                    }));
+                    overlayMesh.userData.isWireframeMesh = true;
+                    child.add(overlayMesh);
+                    wireframeChild = overlayMesh;
+                }
+                wireframeChild.visible = true;
+                // 确保几何体是同步的
+                if (wireframeChild.geometry !== child.geometry) {
+                    wireframeChild.geometry = child.geometry;
+                }
+            } else {
+                // 如果不是 Mixed 模式，隐藏叠加网格
+                if (wireframeChild) wireframeChild.visible = false;
+            }
+        }
+    });
 }
 
 // 辅助函数：根据索引选中模型，并计算其半径
@@ -911,6 +974,8 @@ function onModelLoaded(object, startTime, modelName) {
             child.receiveShadow = true;
             child.frustumCulled = params.frustumCulling;
 
+            child.userData.isModelMesh = true;
+
             if (child.material) {
                 child.material.side = params.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
             }
@@ -1008,7 +1073,14 @@ function applySimplification(reduceRatio) {
             const { mesh, geometry } = data;
 
             if (reduceRatio <= 0.005) {
-                if (mesh.geometry !== geometry) mesh.geometry = geometry;
+                if (mesh.geometry !== geometry) {
+                    mesh.geometry = geometry;
+                    // 同步更新线框子物体
+                    const wireChild = mesh.children.find(c => c.userData.isWireframeMesh);
+                    if (wireChild) {
+                        wireChild.geometry = geometry;
+                    }
+                }
                 totalTrianglesAfter += geometry.index ? geometry.index.count / 3 : geometry.attributes.position.count / 3;
             } else {
                 const totalVertices = geometry.attributes.position.count;
@@ -1020,6 +1092,12 @@ function applySimplification(reduceRatio) {
                 try {
                     const simplified = modifier.modify(geometry, countToRemove);
                     mesh.geometry = simplified;
+                    // 同步更新线框子物体
+                    const wireChild = mesh.children.find(c => c.userData.isWireframeMesh);
+                    if (wireChild) {
+                        wireChild.geometry = simplified;
+                    }
+
                     totalTrianglesAfter += simplified.index ? simplified.index.count / 3 : simplified.attributes.position.count / 3;
                 } catch (e) {
                     if (mesh.geometry !== geometry) mesh.geometry = geometry;
