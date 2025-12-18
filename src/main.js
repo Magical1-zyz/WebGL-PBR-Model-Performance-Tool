@@ -116,7 +116,7 @@ class PerfChart {
 
         // (可选) 绘制当前值的指示点
         const lastX = w;
-        const lastNormalized = (this.data[this.data.length-1] - min) / range;
+        const lastNormalized = (this.data[this.data.length - 1] - min) / range;
         const lastY = (h - paddingToBottom) - (lastNormalized * chartHeight);
         ctx.beginPath();
         ctx.arc(lastX, lastY, 3, 0, Math.PI * 2);
@@ -190,16 +190,29 @@ let gpuTimer;
 let selectedModelRadius = 1.0; // 当前选中模型的半径，用于计算 Gizmo 大小
 let isAltDown = false; // Alt 键状态
 
+// === 漫游模式状态变量 ===
+let isRightMouseDown = false; // 右键是否按下
+const flyState = { w: false, a: false, s: false, d: false, q: false, e: false, shift: false };
+
 const params = {
     unlockFPS: false,
     frustumCulling: false,
     doubleSided: true,
     WireframeMode: 'None',
+    cameraMode: 'Orbit', // 摄像机模式: Orbit / Fly
+    flySpeed: 10.0,      // 漫游速度
+    flySensitivity: 0.002, // 鼠标灵敏度
     exposure: 1.0,
     blur: 0.0,
     rotation: 0,
     resetCam: () => {
         controls.reset();
+        // 如果在飞行模式下重置，可能需要把 target 设置到相机前方
+        if (params.cameraMode === 'Fly') {
+            const dir = new THREE.Vector3();
+            camera.getWorldDirection(dir);
+            controls.target.copy(camera.position).add(dir.multiplyScalar(10));
+        }
         if (mainGroup) fitCameraToSelection(mainGroup);
     }
 };
@@ -271,10 +284,16 @@ function init() {
     scene.add(dirLight);
 
     // 事件监听
+    // 阻止右键菜单，方便 UE 风格漫游
+    window.addEventListener('contextmenu', e => {
+        if (params.cameraMode === 'Fly') e.preventDefault();
+    });
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
     // 使用 capture: true 确保尽早捕获事件，防止被其他UI阻挡
     window.addEventListener('pointerdown', onPointerDown, { capture: false });
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointermove', onPointerMove);
 
     initGUI();
     initFileHandlers();
@@ -313,14 +332,9 @@ function init() {
     });
 }
 
-function onKeyUp(event) {
-    if (event.key === 'Alt' || event.key === 'Meta') { // 兼容 Mac Option/Command
-        isAltDown = false;
-        // log("Alt Up"); // 调试用
-    }
-}
-
+// === 输入事件处理 ===
 function onKeyDown(event) {
+    // 全局快捷键
     if (event.key === 'Delete' || event.key === 'Backspace') {
         if (document.activeElement.tagName !== 'INPUT') {
             deleteSelectedModel();
@@ -328,10 +342,38 @@ function onKeyDown(event) {
     }
     if (event.key === 'Alt' || event.key === 'Meta') {
         isAltDown = true;
-        // log("Alt Down"); // 调试用
+    }
+
+    // 漫游按键记录
+    switch (event.code) {
+        case 'KeyW': flyState.w = true; break;
+        case 'KeyA': flyState.a = true; break;
+        case 'KeyS': flyState.s = true; break;
+        case 'KeyD': flyState.d = true; break;
+        case 'KeyQ': flyState.q = true; break;
+        case 'KeyE': flyState.e = true; break;
+        case 'ShiftLeft':
+        case 'ShiftRight': flyState.shift = true; break;
     }
 }
 
+function onKeyUp(event) {
+    if (event.key === 'Alt' || event.key === 'Meta') {
+        isAltDown = false;
+    }
+
+    // 漫游按键释放
+    switch (event.code) {
+        case 'KeyW': flyState.w = false; break;
+        case 'KeyA': flyState.a = false; break;
+        case 'KeyS': flyState.s = false; break;
+        case 'KeyD': flyState.d = false; break;
+        case 'KeyQ': flyState.q = false; break;
+        case 'KeyE': flyState.e = false; break;
+        case 'ShiftLeft':
+        case 'ShiftRight': flyState.shift = false; break;
+    }
+}
 
 function onPointerDown(event) {
     // === 核心修复：强制同步 Alt 状态 ===
@@ -341,6 +383,17 @@ function onPointerDown(event) {
     // 只有当点击不在 UI 面板上时才进行选择检测
     if (event.target.closest('#gui-container') || event.target.closest('#stats-panel')) return;
 
+    // === Fly Mode Logic ===
+    if (params.cameraMode === 'Fly') {
+        // 右键按下 (button === 2)
+        if (event.button === 2) {
+            isRightMouseDown = true;
+            controls.enabled = false; // 禁用 Orbit
+            return; // 漫游时，不进行选择
+        }
+    }
+
+    // === Object Selection Logic ===
     pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
     pointer.y = - (event.clientY / window.innerHeight) * 2 + 1;
 
@@ -380,6 +433,38 @@ function onPointerDown(event) {
             selectModelByIndex(rootIndex);
             log(`Selected: ${loadedModels[rootIndex].name}`);
         }
+    }
+}
+
+function onPointerUp(event) {
+    if (params.cameraMode === 'Fly') {
+        if (event.button === 2) {
+            isRightMouseDown = false;
+            // 恢复 OrbitControls (如果不在拖拽 Gizmo 的话)
+            if (!transformControl.dragging) {
+                controls.enabled = true;
+            }
+        }
+    }
+}
+
+function onPointerMove(event) {
+    // 只有在 Fly 模式且按住右键时才旋转视角
+    if (params.cameraMode === 'Fly' && isRightMouseDown) {
+        const movementX = event.movementX || event.mozMovementX || event.webkitMovementX || 0;
+        const movementY = event.movementY || event.mozMovementY || event.webkitMovementY || 0;
+
+        // 简单的 Euler 旋转 (模仿 PointerLockControls 的逻辑)
+        // 绕 Y 轴旋转 (左右)
+        camera.rotation.y -= movementX * params.flySensitivity;
+        // 绕 X 轴旋转 (上下)
+        camera.rotation.x -= movementY * params.flySensitivity;
+
+        // 限制垂直角度，防止翻转
+        camera.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, camera.rotation.x));
+
+        // 关键：Euler 旋转顺序，保证 Look 行为自然
+        camera.rotation.order = 'YXZ';
     }
 }
 
@@ -593,7 +678,7 @@ function initGUI() {
         });
     });
 
-    // 新增：简化范围监听
+    // 简化范围监听
     const scopeRadios = document.getElementsByName('simp-scope');
     scopeRadios.forEach(r => {
         r.addEventListener('change', () => {
@@ -629,6 +714,19 @@ function initGUI() {
 
     gui.add(params, 'unlockFPS').name('Unlock FPS Limit')
         .onChange(v => log(v ? "FPS Unlocked" : "FPS Locked"));
+
+    // 摄像机模式切换
+    gui.add(params, 'cameraMode', ['Orbit', 'Fly']).name('Camera Mode')
+        .onChange(mode => {
+            if (mode === 'Orbit') {
+                controls.enabled = true;
+                log("Mode: Orbit Control");
+            } else {
+                controls.enabled = false;
+                log("Mode: Fly (Hold RMB + WASD)");
+            }
+        });
+    gui.add(params, 'flySpeed', 1, 50).name('Fly Speed');
 
     gui.add(params, 'frustumCulling').name('Frustum Culling').onChange(updateCullingSettings);
     gui.add(params, 'doubleSided').name('Double Sided').onChange(updateMaterialSide);
@@ -941,14 +1039,14 @@ function initFileHandlers() {
     if (inputFolder) {
         inputFolder.addEventListener('change', (e) => {
             handleFiles(e.target.files);
-            e.target.value = ''; 
+            e.target.value = '';
         });
     }
 
     if (inputFiles) {
         inputFiles.addEventListener('change', (e) => {
             handleFiles(e.target.files);
-            e.target.value = ''; 
+            e.target.value = '';
         });
     }
 
@@ -967,7 +1065,7 @@ function initFileHandlers() {
 
     // Drag-and-Drop 支持
     document.addEventListener('dragover', (event) => {
-        event.preventDefault(); 
+        event.preventDefault();
     });
 
     document.addEventListener('drop', (event) => {
