@@ -1377,6 +1377,47 @@ function onWindowResize() {
     renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
+// === 处理漫游模式的相机移动 ===
+// 添加一个全局时钟，用于计算平滑移动
+const clock = new THREE.Clock(); 
+
+function updateFlyControls(delta) {
+    // 只有在按下右键时才允许移动 (UE风格)
+    if (!isRightMouseDown) return;
+
+    // 按住 Shift 加速 (2.5倍速)
+    const speedMultiplier = flyState.shift ? 2.5 : 1.0;
+    const moveDistance = params.flySpeed * speedMultiplier * delta;
+    
+    // 1. 前后移动 (W/S)
+    if (flyState.w || flyState.s) {
+        const dir = new THREE.Vector3();
+        camera.getWorldDirection(dir); // 获取当前相机朝向
+        // W 前进，S 后退
+        if (flyState.s) dir.negate();
+        camera.position.add(dir.multiplyScalar(moveDistance));
+    }
+
+    // 2. 左右横移 (A/D)
+    if (flyState.a || flyState.d) {
+        const dir = new THREE.Vector3();
+        camera.getWorldDirection(dir);
+        dir.cross(camera.up).normalize(); // 计算右向量 (叉乘)
+        
+        // A 向左，D 向右
+        if (flyState.a) dir.negate();
+        camera.position.add(dir.multiplyScalar(moveDistance));
+    }
+
+    // 3. 垂直升降 (Q/E)
+    if (flyState.q || flyState.e) {
+        const up = new THREE.Vector3(0, 1, 0); // 世界坐标系的上方
+        // E 上升，Q 下降
+        if (flyState.q) up.negate();
+        camera.position.add(up.multiplyScalar(moveDistance));
+    }
+}
+
 // === 核心渲染循环 ===
 function animate() {
     if (params.unlockFPS) {
@@ -1386,9 +1427,16 @@ function animate() {
     }
 
     const now = performance.now();
+    const delta = clock.getDelta();
     frameCount++;
 
-    controls.update();
+    // 只有在 Orbit 模式下才更新轨道控制器
+    if (params.cameraMode === 'Orbit') {
+        controls.update();
+    } else {
+        // === 在 Fly 模式下更新相机位置 ===
+        updateFlyControls(delta);
+    }
 
     // === Gizmo 大小动态调整 ===
     // 逻辑：(模型半径 / 相机距离) * 系数
