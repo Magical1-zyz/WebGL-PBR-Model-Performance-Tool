@@ -377,7 +377,7 @@ function onKeyUp(event) {
 }
 
 function onPointerDown(event) {
-    // === 核心修复：强制同步 Alt 状态 ===
+    // === 强制同步 Alt 状态 ===
     // 即使 keydown 没触发（比如焦点丢失），点击鼠标时也会检测 Alt 键
     isAltDown = event.altKey || event.metaKey;
 
@@ -502,7 +502,7 @@ function duplicateSelectedModel() {
         // 1. 基础克隆 (此时 Geometry, Material, Texture 都是共享的)
         const cloneObj = originalObj.clone();
 
-        // === 核心修改：强制全量深度克隆 (Geometry + Material + Texture) ===
+        // === 强制全量深度克隆 (Geometry + Material + Texture) ===
         cloneObj.traverse((child) => {
             if (child.isMesh) {
                 // A. 深度克隆几何体 (Geometry)
@@ -616,7 +616,7 @@ function duplicateSelectedModel() {
 
 // 辅助：生成唯一名称
 function getUniqueName(baseName) {
-    // 逻辑修复：确保能正确处理 box.glb -> box_1.glb 以及 box_1.glb -> box_2.glb
+    // 确保能正确处理 box.glb -> box_1.glb 以及 box_1.glb -> box_2.glb
     let prefix = baseName;
     let ext = "";
 
@@ -1005,6 +1005,7 @@ function initFileHandlers() {
 
         Array.from(files).forEach(file => {
             blobURLs[file.name] = URL.createObjectURL(file);
+            log(`Detected: ${file.name} (${(file.size/1024).toFixed(1)} KB)`); // Debug日志
 
             if (file.name.match(/\.(gltf|glb|obj)$/i)) {
                 rootFile = file.name;
@@ -1024,12 +1025,14 @@ function initFileHandlers() {
 
         log(`Loading: ${rootFile}`);
 
+        // 2. 根据文件类型使用不同加载器
         if (extension === 'obj') {
             // OBJ 加载逻辑
             const objLoader = new OBJLoader(manager);
 
             if (mtlFile) {
                 // 如果有 MTL，先加载 MTL 再加载 OBJ
+                log(`Found MTL: ${mtlFile}, loading materials...`);
                 const mtlLoader = new MTLLoader(manager);
                 mtlLoader.load(mtlFile, (materials) => {
                     materials.preload();
@@ -1040,6 +1043,7 @@ function initFileHandlers() {
                 }, undefined, (err) => log(`Error loading MTL: ${err.message}`));
             } else {
                 // 没有 MTL，直接加载 OBJ (白模)
+                log("Warning: No .mtl file found. Loading mesh only.");
                 objLoader.load(rootFile, (object) => {
                     onModelLoaded(object, startTime, rootName);
                 }, undefined, (err) => log(`Error loading OBJ: ${err.message}`));
@@ -1051,9 +1055,75 @@ function initFileHandlers() {
                 onModelLoaded(gltf.scene, startTime, rootName);
             }, undefined, (err) => {
                 log(`Error: ${err.message}`);
+                // 常见错误提示
+                if(err.message.includes('bin') || err.message.includes('404')) {
+                    log("MISSING BIN FILE? Please drag .gltf AND .bin files together!");
+                }
             });
         }
     };
+
+    // === 支持文件夹拖拽的辅助函数 ===
+    // 递归读取目录内容
+    async function scanFiles(entry) {
+        if (entry.isFile) {
+            return new Promise((resolve) => {
+                entry.file((file) => resolve([file]));
+            });
+        } else if (entry.isDirectory) {
+            const directoryReader = entry.createReader();
+            const entries = await new Promise((resolve) => {
+                // 读取目录下的所有条目
+                directoryReader.readEntries((entries) => resolve(entries));
+            });
+            let files = [];
+            for (const subEntry of entries) {
+                const subFiles = await scanFiles(subEntry);
+                files = files.concat(subFiles);
+            }
+            return files;
+        }
+        return [];
+    }
+    // ========================================
+
+    // 绑定 Drop 事件
+    document.addEventListener('dragover', (event) => event.preventDefault());
+
+    document.addEventListener('drop', async (event) => {
+        event.preventDefault();
+        
+        const items = event.dataTransfer.items;
+        if (!items) return;
+
+        log("Scanning dropped items...");
+        
+        let allFiles = [];
+        const promises = [];
+
+        // 遍历所有拖入的项目（包括文件和文件夹）
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            // webkitGetAsEntry 是标准推荐的方式来处理文件/文件夹区分
+            const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+            
+            if (entry) {
+                promises.push(scanFiles(entry));
+            } else if (item.kind === 'file') {
+                // 回退方案
+                const file = item.getAsFile();
+                if(file) allFiles.push(file);
+            }
+        }
+
+        // 等待所有文件夹扫描完成
+        const results = await Promise.all(promises);
+        results.forEach(files => allFiles = allFiles.concat(files));
+
+        if (allFiles.length > 0) {
+            handleFiles(allFiles);
+        }
+    });
 
     const inputFolder = document.getElementById('file-input-folder');
     const inputFiles = document.getElementById('file-input-files');
@@ -1320,7 +1390,7 @@ function animate() {
 
     controls.update();
 
-    // === 核心修复：Gizmo 大小动态调整 ===
+    // === Gizmo 大小动态调整 ===
     // 逻辑：(模型半径 / 相机距离) * 系数
     // 这样当相机拉远 (distance变大) 时，size 变小，从而看起来像是"附着"在模型上，而不是占据整个屏幕
     if (transformControl && transformControl.object) {
