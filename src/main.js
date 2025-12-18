@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 import { SimplifyModifier } from 'three/addons/modifiers/SimplifyModifier.js';
 import GUI from 'three/addons/libs/lil-gui.module.min.js';
@@ -113,13 +115,13 @@ class PerfChart {
         ctx.fill();
 
         // (可选) 绘制当前值的指示点
-        // const lastX = w;
-        // const lastNormalized = (this.data[this.data.length-1] - min) / range;
-        // const lastY = (h - paddingToBottom) - (lastNormalized * chartHeight);
-        // ctx.beginPath();
-        // ctx.arc(lastX, lastY, 3, 0, Math.PI * 2);
-        // ctx.fillStyle = '#fff';
-        // ctx.fill();
+        const lastX = w;
+        const lastNormalized = (this.data[this.data.length-1] - min) / range;
+        const lastY = (h - paddingToBottom) - (lastNormalized * chartHeight);
+        ctx.beginPath();
+        ctx.arc(lastX, lastY, 3, 0, Math.PI * 2);
+        ctx.fillStyle = '#fff';
+        ctx.fill();
     }
 
     hexToRgba(hex, alpha) {
@@ -296,7 +298,7 @@ function init() {
 
     updateModelSelectUI();
 
-    const defaultHDRPath = 'data/irrmaps/afrikaans_church_exterior_1k.hdr'; 
+    const defaultHDRPath = 'data/irrmaps/docklands_01_4k.hdr';
 
     new RGBELoader().load(defaultHDRPath, (texture) => {
         texture.mapping = THREE.EquirectangularReflectionMapping;
@@ -630,8 +632,8 @@ function initGUI() {
     gui.add(params, 'frustumCulling').name('Frustum Culling').onChange(updateCullingSettings);
     gui.add(params, 'doubleSided').name('Double Sided').onChange(updateMaterialSide);
     gui.add(params, 'wireframeMode', ['None', 'Wireframe Only', 'Mixed (Overlay)'])
-       .name('Wireframe Mode')
-       .onChange(updateWireframeMode);
+        .name('Wireframe Mode')
+        .onChange(updateWireframeMode);
     gui.add(params, 'exposure', 0.1, 5.0).name('Exposure').onChange(v => renderer.toneMappingExposure = v);
     gui.add(params, 'blur', 0, 1).name('BG Blur').onChange(v => scene.backgroundBlurriness = v);
     gui.add(params, 'rotation', 0, 360).name('Auto Rotation').onChange(v => {
@@ -646,7 +648,7 @@ function updateWireframeMode(mode) {
     mainGroup.traverse(child => {
         // 只处理原始模型网格
         if (child.isMesh && child.userData.isModelMesh) {
-            
+
             // 1. 处理 "Wireframe Only" 模式 (修改材质)
             if (child.material) {
                 const materials = Array.isArray(child.material) ? child.material : [child.material];
@@ -657,18 +659,18 @@ function updateWireframeMode(mode) {
 
             // 2. 处理 "Mixed (Overlay)" 模式 (添加/显示子物体)
             let wireframeChild = child.children.find(c => c.userData.isWireframeMesh);
-            
+
             if (mode === 'Mixed (Overlay)') {
                 if (!wireframeChild) {
                     // 如果不存在叠加网格，则创建
                     const wireGeo = new THREE.WireframeGeometry(child.geometry); // 使用WireframeGeometry优化显示
-                    const wireMat = new THREE.LineBasicMaterial({ 
+                    const wireMat = new THREE.LineBasicMaterial({
                         color: 0x00ffff, // 青色线框
                         depthTest: true,
                         opacity: 0.5,
                         transparent: true
-                    }); 
-                    
+                    });
+
                     // 使用 LineSegments 渲染 WireframeGeometry
                     // 注意：这里不用 MeshBasicMaterial wireframe，因为 WireframeGeometry 对三角面处理更好看（不显对角线）
                     // 但为了和 SimplifyModifier 兼容，简单的 Mesh clone 也许更稳定？
@@ -679,7 +681,7 @@ function updateWireframeMode(mode) {
                         side: THREE.DoubleSide,
                         depthTest: true,
                         polygonOffset: true, // 防止 Z-Fighting
-                        polygonOffsetFactor: 1, 
+                        polygonOffsetFactor: 1,
                         polygonOffsetUnits: 1
                     }));
                     overlayMesh.userData.isWireframeMesh = true;
@@ -876,27 +878,59 @@ function initFileHandlers() {
 
         let rootFile = null;
         let rootName = "Unknown Model";
+        let extension = null;
+        let mtlFile = null;
 
         Array.from(files).forEach(file => {
             blobURLs[file.name] = URL.createObjectURL(file);
-            if (file.name.match(/\.(gltf|glb)$/i)) {
+
+            if (file.name.match(/\.(gltf|glb|obj)$/i)) {
                 rootFile = file.name;
                 rootName = file.name;
+                extension = file.name.split('.').pop().toLowerCase();
+            }
+
+            if (file.name.match(/\.mtl$/i)) {
+                mtlFile = file.name;
             }
         });
 
         if (!rootFile) {
-            log("Error: No .gltf or .glb found.");
+            log("Error: No .gltf, .glb, or .obj found.");
             return;
         }
 
         log(`Loading: ${rootFile}`);
-        const loader = new GLTFLoader(manager);
-        loader.load(rootFile, (gltf) => {
-            onModelLoaded(gltf.scene, startTime, rootName);
-        }, undefined, (err) => {
-            log(`Error: ${err.message}`);
-        });
+
+        if (extension === 'obj') {
+            // OBJ 加载逻辑
+            const objLoader = new OBJLoader(manager);
+
+            if (mtlFile) {
+                // 如果有 MTL，先加载 MTL 再加载 OBJ
+                const mtlLoader = new MTLLoader(manager);
+                mtlLoader.load(mtlFile, (materials) => {
+                    materials.preload();
+                    objLoader.setMaterials(materials);
+                    objLoader.load(rootFile, (object) => {
+                        onModelLoaded(object, startTime, rootName);
+                    }, undefined, (err) => log(`Error loading OBJ: ${err.message}`));
+                }, undefined, (err) => log(`Error loading MTL: ${err.message}`));
+            } else {
+                // 没有 MTL，直接加载 OBJ (白模)
+                objLoader.load(rootFile, (object) => {
+                    onModelLoaded(object, startTime, rootName);
+                }, undefined, (err) => log(`Error loading OBJ: ${err.message}`));
+            }
+        } else {
+            // GLTF/GLB 加载逻辑
+            const loader = new GLTFLoader(manager);
+            loader.load(rootFile, (gltf) => {
+                onModelLoaded(gltf.scene, startTime, rootName);
+            }, undefined, (err) => {
+                log(`Error: ${err.message}`);
+            });
+        }
     };
 
     const inputFolder = document.getElementById('file-input-folder');
