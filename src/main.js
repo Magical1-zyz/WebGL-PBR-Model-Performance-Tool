@@ -294,6 +294,7 @@ function init() {
     window.addEventListener('pointerdown', onPointerDown, { capture: false });
     window.addEventListener('pointerup', onPointerUp);
     window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('wheel', onMouseWheel, { passive: false });
 
     initGUI();
     initFileHandlers();
@@ -465,6 +466,28 @@ function onPointerMove(event) {
 
         // 关键：Euler 旋转顺序，保证 Look 行为自然
         camera.rotation.order = 'YXZ';
+    }
+}
+
+// 滚轮调整飞行速度
+function onMouseWheel(event) {
+    // 只有在 Fly 模式且 按住右键 时才生效
+    if (params.cameraMode === 'Fly' && isRightMouseDown) {
+        event.preventDefault(); // 阻止页面滚动
+        
+        // 向上滚(deltaY < 0) -> 加速，向下滚 -> 减速
+        // 使用乘法倍率，手感更像 UE
+        const factor = 1.1; 
+        if (event.deltaY < 0) {
+            params.flySpeed *= factor;
+        } else {
+            params.flySpeed /= factor;
+        }
+
+        // 限制速度范围
+        params.flySpeed = Math.max(0.1, Math.min(200, params.flySpeed));
+        
+        log(`Fly Speed: ${params.flySpeed.toFixed(1)}`);
     }
 }
 
@@ -726,7 +749,7 @@ function initGUI() {
                 log("Mode: Fly (Hold RMB + WASD)");
             }
         });
-    gui.add(params, 'flySpeed', 1, 50).name('Fly Speed');
+    gui.add(params, 'flySpeed', 0.1, 200).name('Fly Speed').listen();
 
     gui.add(params, 'frustumCulling').name('Frustum Culling').onChange(updateCullingSettings);
     gui.add(params, 'doubleSided').name('Double Sided').onChange(updateMaterialSide);
