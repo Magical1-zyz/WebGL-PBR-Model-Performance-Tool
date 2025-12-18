@@ -298,6 +298,7 @@ function init() {
 
     updateModelSelectUI();
 
+    // 默认加载 HDR
     const defaultHDRPath = 'data/irrmaps/docklands_01_4k.hdr';
 
     new RGBELoader().load(defaultHDRPath, (texture) => {
@@ -940,14 +941,14 @@ function initFileHandlers() {
     if (inputFolder) {
         inputFolder.addEventListener('change', (e) => {
             handleFiles(e.target.files);
-            e.target.value = ''; // <--- 新增：清空值，允许重复选择同一文件夹
+            e.target.value = ''; 
         });
     }
 
     if (inputFiles) {
         inputFiles.addEventListener('change', (e) => {
             handleFiles(e.target.files);
-            e.target.value = ''; // <--- 新增：清空值，允许重复选择同一文件
+            e.target.value = ''; 
         });
     }
 
@@ -962,6 +963,18 @@ function initFileHandlers() {
             scene.backgroundBlurriness = params.blur;
             log(`HDR Set: ${file.name}`);
         });
+    });
+
+    // Drag-and-Drop 支持
+    document.addEventListener('dragover', (event) => {
+        event.preventDefault(); 
+    });
+
+    document.addEventListener('drop', (event) => {
+        event.preventDefault();
+        if (event.dataTransfer.files && event.dataTransfer.files.length > 0) {
+            handleFiles(event.dataTransfer.files);
+        }
     });
 }
 
