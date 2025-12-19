@@ -194,6 +194,12 @@ let isAltDown = false; // Alt 键状态
 let isRightMouseDown = false; // 右键是否按下
 const flyState = { w: false, a: false, s: false, d: false, q: false, e: false, shift: false };
 
+// === Benchmark 测试变量 ===
+let isBenchmarking = false;
+let benchmarkStartTime = 0;
+let benchmarkData = []; // 存储 [时间, FPS, DrawCalls, Triangles]
+const BENCHMARK_DURATION = 60; // 测试时长 (秒)
+
 const params = {
     unlockFPS: false,
     frustumCulling: false,
@@ -734,6 +740,14 @@ function initGUI() {
     }
 
     const gui = new GUI({ container: document.getElementById('lil-gui-mount'), width: '100%' });
+
+    // === Benchmark 按钮 ===
+    const folderPerf = gui.addFolder('Performance Benchmark');
+    const benchParams = {
+        startBench: () => startBenchmark()
+    };
+    folderPerf.add(benchParams, 'startBench').name('Start 1min Roam Test');
+    folderPerf.open(); // 默认展开
 
     gui.add(params, 'unlockFPS').name('Unlock FPS Limit')
         .onChange(v => log(v ? "FPS Unlocked" : "FPS Locked"));
@@ -1418,6 +1432,45 @@ function updateFlyControls(delta) {
     }
 }
 
+// === 结束测试并导出 CSV ===
+function endBenchmark() {
+    isBenchmarking = false;
+    log("Benchmark Complete! Downloading CSV...");
+
+    // 1. 生成 CSV 内容
+    let csvContent = "data:text/csv;charset=utf-8,";
+    csvContent += "Time (s),FPS,FrameTime (ms),DrawCalls,Triangles\n"; // 表头
+
+    benchmarkData.forEach(row => {
+        csvContent += row.join(",") + "\n";
+    });
+
+    // 2. 创建下载链接
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    const date = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
+    link.setAttribute("download", `fps_benchmark_${date}.csv`);
+    document.body.appendChild(link); // Required for FF
+    link.click();
+    document.body.removeChild(link);
+}
+
+function startBenchmark() {
+    if (isBenchmarking) return;
+    
+    // 自动切换到漫游模式 
+    params.cameraMode = 'Fly';
+    controls.enabled = false;
+    
+    // 重置数据
+    benchmarkData = [];
+    benchmarkStartTime = performance.now();
+    isBenchmarking = true;
+    
+    log(`Benchmark Started. Roam for ${BENCHMARK_DURATION}s...`);
+}
+
 // === 核心渲染循环 ===
 function animate() {
     if (params.unlockFPS) {
@@ -1491,6 +1544,31 @@ function animate() {
             if (gpuTimeRaw !== null) charts.gpu.update(gpuTimeRaw);
             charts.calls.update(calls);
             charts.tris.update(tris);
+        }
+
+        // === Benchmark 记录逻辑 ===
+        if (isBenchmarking) {
+            // 计算已经经过的秒数
+            const elapsedSeconds = (now - benchmarkStartTime) / 1000;
+
+            // 记录当前时刻的数据
+            benchmarkData.push([
+                elapsedSeconds.toFixed(1), // 时间
+                fps,                       // FPS
+                frameTime,                 // 帧耗时
+                renderer.info.render.calls,     // Draw Calls
+                renderer.info.render.triangles  // 三角形数
+            ]);
+
+            // 在控制台显示倒计时
+            const remaining = Math.max(0, BENCHMARK_DURATION - elapsedSeconds).toFixed(0);
+            // 这里为了不刷屏，可以只在特定位置显示，或者复用 log 功能
+            log(`Benchmarking... ${remaining}s`); 
+
+            // 检查是否结束
+            if (elapsedSeconds >= BENCHMARK_DURATION) {
+                endBenchmark();
+            }
         }
 
         frameCount = 0;
