@@ -240,6 +240,7 @@ function init() {
         alpha: false,
         powerPreference: "high-performance"
     });
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -497,7 +498,7 @@ function onMouseWheel(event) {
     }
 }
 
-// 复制模型 (带错误保护)
+// 复制模型
 function duplicateSelectedModel() {
     try {
         const originalEntry = loadedModels[selectedModelIndex];
@@ -1498,7 +1499,7 @@ function animate() {
         const dist = camera.position.distanceTo(transformControl.object.position);
         if (dist > 0 && selectedModelRadius > 0) {
             // 2.0 是一个视觉系数，你可以根据需要调整
-            transformControl.size = (selectedModelRadius / dist) * 2.0;
+            transformControl.size = (selectedModelRadius / dist) * 1.0;
         } else {
             transformControl.size = 0.5; // 兜底
         }
