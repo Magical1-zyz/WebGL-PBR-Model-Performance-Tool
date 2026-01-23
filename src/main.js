@@ -189,6 +189,7 @@ let selectedModelIndex = -1;
 let gpuTimer;
 let selectedModelRadius = 1.0; // 当前选中模型的半径，用于计算 Gizmo 大小
 let isAltDown = false; // Alt 键状态
+let currrentEstVRAM = 0; // 用于存储当前显存预估值 (MB)
 
 // === 漫游模式状态变量 ===
 let isRightMouseDown = false; // 右键是否按下
@@ -906,6 +907,7 @@ function updateVRAMEst() {
     });
 
     const mb = (bytes / 1024 / 1024).toFixed(2);
+    currrentEstVRAM = mb;
     document.getElementById('val-vram').innerText = `${mb} MB (${geoCount} Geo, ${texCount} Tex)`;
 }
 
@@ -1433,14 +1435,16 @@ function updateFlyControls(delta) {
     }
 }
 
-// === 结束测试并导出 CSV ===
+// === 结束测试并导出 CSV (全量指标版) ===
 function endBenchmark() {
     isBenchmarking = false;
     log("Benchmark Complete! Downloading CSV...");
 
     // 1. 生成 CSV 内容
     let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += "Time (s),FPS,FrameTime (ms),DrawCalls,Triangles\n"; // 表头
+    
+    // === 核心修改：更新表头，包含所有指标 ===
+    csvContent += "Time (s),FPS,FrameTime (ms),CPU Time (ms),GPU Time (ms),Memory (MB),VRAM (MB),DrawCalls,Triangles\n";
 
     benchmarkData.forEach(row => {
         csvContent += row.join(",") + "\n";
@@ -1450,9 +1454,12 @@ function endBenchmark() {
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    const date = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
-    link.setAttribute("download", `fps_benchmark_${date}.csv`);
-    document.body.appendChild(link); // Required for FF
+    
+    // 生成带时间戳的文件名
+    const date = new Date().toISOString().slice(0, 19).replace(/:/g, "-").replace("T", "_");
+    link.setAttribute("download", `benchmark_full_${date}.csv`);
+    
+    document.body.appendChild(link); // Required for Firefox
     link.click();
     document.body.removeChild(link);
 }
@@ -1551,14 +1558,21 @@ function animate() {
         if (isBenchmarking) {
             // 计算已经经过的秒数
             const elapsedSeconds = (now - benchmarkStartTime) / 1000;
+            
+            // 获取 JS 内存使用量 (仅 Chrome/Edge 支持，单位 MB)
+            const jsHeap = performance.memory ? (performance.memory.usedJSHeapSize / 1048576).toFixed(2) : "0.00";
 
-            // 记录当前时刻的数据
+            // 记录当前时刻的全量数据
             benchmarkData.push([
-                elapsedSeconds.toFixed(1), // 时间
-                fps,                       // FPS
-                frameTime,                 // 帧耗时
-                renderer.info.render.calls,     // Draw Calls
-                renderer.info.render.triangles  // 三角形数
+                elapsedSeconds.toFixed(1),      // 1. Time
+                fps,                            // 2. FPS
+                frameTime,                      // 3. FrameTime
+                cpuTime.toFixed(2),             // 4. CPU Time (ms)
+                gpuTimeRaw !== null ? gpuTimeRaw.toFixed(3) : "0.00", // 5. GPU Time (ms)
+                jsHeap,                         // 6. Memory (JS Heap MB)
+                currentEstVRAM,                 // 7. VRAM (Est MB)
+                renderer.info.render.calls,     // 8. DrawCalls
+                renderer.info.render.triangles  // 9. Triangles
             ]);
 
             // 在控制台显示倒计时
