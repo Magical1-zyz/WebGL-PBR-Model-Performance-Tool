@@ -190,6 +190,9 @@ let gpuTimer;
 let selectedModelRadius = 1.0; // 当前选中模型的半径，用于计算 Gizmo 大小
 let isAltDown = false; // Alt 键状态
 let currentEstVRAM = 0; // 用于存储当前显存预估值 (MB)
+let accCpuTime = 0; // CPU 累积时间
+let accGpuTime = 0; // GPU 累积时间
+let validGpuFrames = 0; // 成功获取到 GPU 时间的帧数
 
 // === 漫游模式状态变量 ===
 let isRightMouseDown = false; // 右键是否按下
@@ -1499,6 +1502,9 @@ function startBenchmark() {
 
 // === 核心渲染循环 ===
 function animate() {
+    // 记录帧开始时间（测量整个 JS 逻辑耗时）
+    const frameStart = performance.now();
+
     if (params.unlockFPS) {
         setTimeout(animate, 0);
     } else {
@@ -1530,46 +1536,54 @@ function animate() {
         }
     }
 
-    // 1. 计时开始
-    const cpuStart = performance.now();
+    // 2. 渲染与 GPU 计时
     gpuTimer.start();
-
-    // 2. 渲染
     renderer.render(scene, camera);
-
-    // 3. 计时结束
     gpuTimer.end();
-    const cpuEnd = performance.now();
-    const cpuTime = cpuEnd - cpuStart;
+
+    // 3.计算本帧 CPU 纯耗时 (当前时间 - 函数最开始的时间)
+    const frameEnd = performance.now();
+    const currentCpuTime = frameEnd - frameStart;
+    accCpuTime += currentCpuTime;
+
+    // 尝试获取 GPU 时间 (注意：GPU 结果是异步的，可能返回 null)
+    const gpuTimeRaw = gpuTimer.poll();
+    if (gpuTimeRaw !== null) {
+        accGpuTime += gpuTimeRaw;
+        validGpuFrames++;
+    }
 
     if (now - lastTime >= 500) {
         const timeDiff = now - lastTime;
+
+        // 计算各项平均值
         const fps = Math.round((frameCount * 1000) / timeDiff);
-        const frameTime = (timeDiff / frameCount).toFixed(2);
+        const avgFrameTime = (timeDiff / frameCount).toFixed(2); // 平均帧间隔 (含 VSync 等待)
+        const avgCpuTime = (accCpuTime / frameCount).toFixed(2); // 平均 CPU 耗时 (纯工作)
 
-        const gpuTimeRaw = gpuTimer.poll();
-        const gpuTimeStr = gpuTimeRaw !== null ? gpuTimeRaw.toFixed(3) : "N/A";
+        // GPU 平均值 (因为 GPU 计时器可能有的帧没返回，所以单独计数)
+        const avgGpuTime = validGpuFrames > 0 ? (accGpuTime / validGpuFrames).toFixed(3) : "0.00";
+        const displayVRAM = currentEstVRAM;
 
-        const calls = renderer.info.render.calls;
-        const tris = renderer.info.render.triangles;
-
+        // 更新UI面板
         const fpsEl = document.getElementById('val-fps');
         if (fpsEl) {
             document.getElementById('val-fps').innerText = fps;
-            document.getElementById('val-frametime').innerText = frameTime + " ms";
-            document.getElementById('val-cpu').innerText = cpuTime.toFixed(3) + " ms";
-            document.getElementById('val-gpu').innerText = gpuTimeStr + " ms";
-            document.getElementById('val-drawcalls').innerText = calls;
-            document.getElementById('val-tris').innerText = tris;
+            document.getElementById('val-frametime').innerText = avgFrameTime + " ms";
+            document.getElementById('val-cpu').innerText = avgCpuTime + " ms";
+            document.getElementById('val-gpu').innerText = avgGpuTime + " ms";
+            document.getElementById('val-drawcalls').innerText = renderer.info.render.calls;
+            document.getElementById('val-tris').innerText = renderer.info.render.triangles;
         }
 
+        // 更新图标
         if (charts.fps) {
             charts.fps.update(fps);
-            charts.ms.update(parseFloat(frameTime));
-            charts.cpu.update(cpuTime);
-            if (gpuTimeRaw !== null) charts.gpu.update(gpuTimeRaw);
-            charts.calls.update(calls);
-            charts.tris.update(tris);
+            charts.ms.update(parseFloat(avgFrameTime));
+            charts.cpu.update(parseFloat(avgCpuTime));
+            charts.gpu.update(parseFloat(avgGpuTime));
+            charts.calls.update(renderer.info.render.calls);
+            charts.tris.update(renderer.info.render.triangles);
         }
 
         // === Benchmark 记录逻辑 ===
@@ -1580,16 +1594,16 @@ function animate() {
             const jsHeap = performance.memory ? (performance.memory.usedJSHeapSize / 1048576).toFixed(2) : "0.00";
 
             // 2. 记录当前时刻的全量数据 (9个指标)
-            benchmarkData.push([
-                elapsedSeconds.toFixed(1),      // Time
-                fps,                            // FPS
-                frameTime,                      // FrameTime
-                cpuTime.toFixed(2),             // CPU Time (当前帧)
-                gpuTimeRaw !== null ? gpuTimeRaw.toFixed(3) : "0.00", // GPU Time
-                jsHeap,                         // Memory (MB)
-                currentEstVRAM,                 // VRAM (MB)
-                renderer.info.render.calls,     // DrawCalls
-                renderer.info.render.triangles  // Triangles
+           benchmarkData.push([
+                elapsedSeconds.toFixed(1),
+                fps,
+                avgFrameTime,
+                avgCpuTime,   // 使用平均 CPU
+                avgGpuTime,   // 使用平均 GPU
+                jsHeap,
+                displayVRAM,
+                renderer.info.render.calls,
+                renderer.info.render.triangles
             ]);
 
             // 3. 修复倒计时日志 (确保没有被注释，且计算正确)
@@ -1602,7 +1616,11 @@ function animate() {
             }
         }
 
+        // 重置累积器
         frameCount = 0;
+        accCpuTime = 0;
+        accGpuTime = 0;
+        validGpuFrames = 0;
         lastTime = now;
     }
 }
