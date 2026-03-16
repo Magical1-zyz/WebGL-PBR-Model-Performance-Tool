@@ -193,6 +193,7 @@ let currentEstVRAM = 0; // 用于存储当前显存预估值 (MB)
 let accCpuTime = 0; // CPU 累积时间
 let accGpuTime = 0; // GPU 累积时间
 let validGpuFrames = 0; // 成功获取到 GPU 时间的帧数
+let currentHDRTexture = null; // 保存当前加载的 HDR 纹理，不随着背景隐藏而丢失
 
 // === 漫游模式状态变量 ===
 let isRightMouseDown = false; // 右键是否按下
@@ -205,10 +206,17 @@ let benchmarkData = []; // 存储 [时间, FPS, DrawCalls, Triangles]
 const BENCHMARK_DURATION = 60; // 测试时长 (秒)
 
 const params = {
+    // 控制背景是否开启
+    showHDRBackground: true,
+    bgR:0,
+    bgG:0,
+    bgB:0,
+
+    showTransformGizmo: true,
     unlockFPS: false,
     frustumCulling: false,
     doubleSided: true,
-    WireframeMode: 'None',
+    wireframeMode: 'None',
     cameraMode: 'Orbit', // 摄像机模式: Orbit / Fly
     flySpeed: 10.0,      // 漫游速度
     flySensitivity: 0.002, // 鼠标灵敏度
@@ -334,14 +342,27 @@ function init() {
 
     new RGBELoader().load(defaultHDRPath, (texture) => {
         texture.mapping = THREE.EquirectangularReflectionMapping;
-        scene.background = texture;
+        currentHDRTexture = texture;
         scene.environment = texture;
+        updateBackground();
+
         scene.backgroundBlurriness = params.blur; // 应用默认模糊设置
         log(`Default HDR Loaded: ${defaultHDRPath}`);
     }, undefined, (err) => {
         console.warn("Failed to load default HDR:", err);
         log("Default HDR load failed (Check console)");
     });
+}
+
+// 统一更新背景显示的辅助函数
+function updateBackground() {
+    if (params.showHDRBackground && currentHDRTexture) {
+        // 开启背景，并且有 HDR 纹理时，渲染天空盒
+        scene.background = currentHDRTexture;
+    } else {
+        // 关闭背景，或还没加载 HDR 时，显示纯色 (注意要除以 255 转换到 0~1 的范围)
+        scene.background = new THREE.Color(params.bgR / 255, params.bgG / 255, params.bgB / 255);
+    }
 }
 
 // === 输入事件处理 ===
@@ -750,9 +771,28 @@ function initGUI() {
     const folderPerf = gui.addFolder('Performance Benchmark');
     const benchParams = {
         startBench: () => startBenchmark()
-    };
+    };gui.add(params, 'showTransformGizmo').name('Show Transform Gizmo').onChange(v => {
+        if (transformControl) {
+            transformControl.visible = v; // 控制是否可见
+            transformControl.enabled = v; // 控制是否可以响应鼠标拖拽交互
+        }
+    });
     folderPerf.add(benchParams, 'startBench').name('Start 1min Roam Test');
     folderPerf.open(); // 默认展开
+
+    // HDR背景与纯色背景控制器
+    gui.add(params, 'showHDRBackground').name('Show HDR Skybox').onChange(updateBackground);
+    const bgFolder = gui.addFolder('Solid Background Color (RGB)');
+    bgFolder.add(params, 'bgR', 0, 255, 1).name('Red').onChange(updateBackground);
+    bgFolder.add(params, 'bgG', 0, 255, 1).name('Green').onChange(updateBackground);
+    bgFolder.add(params, 'bgB', 0, 255, 1).name('Blue').onChange(updateBackground);
+
+    gui.add(params, 'showTransformGizmo').name('Show Transform Gizmo').onChange(v => {
+        if (transformControl) {
+            transformControl.visible = v; // 控制是否可见
+            transformControl.enabled = v; // 控制是否可以响应鼠标拖拽交互
+        }
+    });
 
     gui.add(params, 'unlockFPS').name('Unlock FPS Limit')
         .onChange(v => log(v ? "FPS Unlocked" : "FPS Locked"));
@@ -842,7 +882,7 @@ function updateWireframeMode(mode) {
     });
 }
 
-// 辅助函数：根据索引选中模型，并计算其半径
+// 根据索引选中模型，并计算其半径
 function selectModelByIndex(index) {
     selectedModelIndex = index;
     const tfPanel = document.getElementById('transform-panel');
@@ -870,6 +910,9 @@ function selectModelByIndex(index) {
         selectedModelRadius = Math.max(size.x, size.y, size.z) * 0.5;
         // 防止太小
         if (selectedModelRadius < 0.1) selectedModelRadius = 0.1;
+
+        transformControl.visible = params.showTransformGizmo;
+        transformControl.enabled = params.showTransformGizmo;
     }
 }
 
@@ -1169,8 +1212,10 @@ function initFileHandlers() {
         const url = URL.createObjectURL(file);
         new RGBELoader().load(url, (texture) => {
             texture.mapping = THREE.EquirectangularReflectionMapping;
-            scene.background = texture;
+            currentHDRTexture = texture;
             scene.environment = texture;
+            updateBackground();
+
             scene.backgroundBlurriness = params.blur;
             log(`HDR Set: ${file.name}`);
         });
